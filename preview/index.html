@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GD-Scratch &mdash; Geometry Dash in Scratch blocks</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0b0d1a; color: #e8ecff;
+    font: 14px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    display: flex; flex-direction: column; align-items: center; padding: 24px 16px 48px;
+  }
+  h1 { font-size: 20px; letter-spacing: .18em; margin: 0 0 4px; color: #7ef0ff; }
+  p.sub { margin: 0 0 20px; color: #8a93c4; letter-spacing: .06em; }
+  #stage-wrap {
+    position: relative; width: 480px; max-width: 100%; aspect-ratio: 4 / 3;
+    border: 2px solid #2a3160; border-radius: 8px; overflow: hidden; background: #000;
+    box-shadow: 0 0 60px rgba(90, 130, 255, .18);
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #status {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(6, 8, 20, .88); color: #8a93c4; text-align: center; padding: 24px;
+  }
+  #status.gone { display: none; }
+  #bar { width: 480px; max-width: 100%; display: flex; gap: 8px; margin: 14px 0 22px; }
+  button {
+    flex: 1; background: #171c3a; color: #cdd6ff; border: 1px solid #333c78;
+    border-radius: 6px; padding: 9px 6px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #222a55; }
+  button:disabled { opacity: .4; cursor: default; }
+  .keys { width: 480px; max-width: 100%; border-top: 1px solid #232a52; padding-top: 16px; }
+  .keys dt { color: #7ef0ff; float: left; width: 132px; clear: left; }
+  .keys dd { margin: 0 0 6px; color: #9aa3d4; }
+  a { color: #7ef0ff; }
+</style>
+</head>
+<body>
+
+<h1>GD-SCRATCH</h1>
+<p class="sub">GEOMETRY DASH, BUILT ENTIRELY FROM STOCK SCRATCH 3 BLOCKS</p>
+
+<div id="stage-wrap">
+  <canvas id="stage" width="480" height="360"></canvas>
+  <div id="status">loading the Scratch runtime&hellip;</div>
+</div>
+
+<div id="bar">
+  <button id="greenflag" disabled>&#9873; green flag</button>
+  <button id="stop" disabled>&#9632; stop</button>
+  <button id="turbo" disabled>turbo: off</button>
+</div>
+
+<dl class="keys">
+  <dt>space / up / click</dt><dd>jump &mdash; hold to jump again the instant you land</dd>
+  <dt>up / down</dt><dd>move the menu highlight</dd>
+  <dt>space / enter / click</dt><dd>pick a menu entry</dd>
+  <dt>P</dt><dd>pause and resume</dd>
+  <dt>R</dt><dd>restart the level</dd>
+  <dt>Q</dt><dd>quit to the title screen</dd>
+  <dt>M</dt><dd>music on / off</dd>
+</dl>
+
+<p class="sub" style="margin-top:22px">
+  This is the real <code>dist/GD-Scratch.sb3</code> running on scratch-vm + scratch-render.
+  Load the same file in <a href="https://scratch.mit.edu/projects/editor/">scratch.mit.edu</a>,
+  the Scratch 3.32.1 desktop app or <a href="https://turbowarp.org/">TurboWarp</a>.
+</p>
+
+<!-- UMD bundles, in dependency order. scratch-vm must not see a global
+     `module`/`exports`, so the CommonJS-only scratch-audio bundle is loaded
+     last, behind its own shim. -->
+<script src="/vendor/scratch-storage.js"></script>
+<script src="/vendor/scratch-render.js"></script>
+<script src="/vendor/scratch-vm.js"></script>
+<script src="/vendor/scratch-audio-shim.js"></script>
+<script src="/vendor/scratch-audio.js"></script>
+<script src="/player.js"></script>
+</body>
+</html>

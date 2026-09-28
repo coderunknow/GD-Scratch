@@ -1,0 +1,17 @@
+{
+  "name": "headless",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jszip": "^3.10.2",
+    "pngjs": "^7.0.0",
+    "scratch-vm": "^5.0.300"
+  }
+}
