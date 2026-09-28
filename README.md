@@ -8,27 +8,22 @@ synthesised music and SFX — all of it in a single `.sb3` that loads in Scratch
 3.32.1, on scratch.mit.edu, and in TurboWarp. No extensions, no hacks, no
 custom runtime: `project.json` declares `"extensions": []`.
 
-**v0.2.2** fixes unfair block-edge deaths (corner clips up to 9 px now land
-instead of killing — both the game and the physics reference), makes the
-settings highlight cover the whole row including the ON/OFF pill, and adds
-real in-game settings: **LOW LATENCY** input (CBF-style tap sampling),
-**GRAPHICS** HIGH/LOW/ULTRA (LOW/ULTRA retire the parallax layer and cut or
-disable particles — the practical lever for weak devices), and a **SHOW FPS**
-overlay. TurboWarp's own CBF/fps knobs live in the player and cannot be
-changed from a project; these rows are the in-game equivalents. Per-frame
-interpreter work is 4–13% above v0.2.1 (the cost of the new features) and
-still 30–39% below v0.2.0. See the
-[release verification report](docs/v0.2.2.md).
-
-**v0.2.1** makes the game frame-rate-independent and cheaper to run. The
-simulation is now a fixed 30 Hz clock driven by the `timer` with an
-accumulator and a catch-up cap (see below), so the game plays identically at
-30 fps, at 60 fps under TurboWarp, or at any other render cadence; a
-render-cadence input latch keeps taps exact at high frame rates; and per-frame
-primitive work dropped 36–46% across all benchmark scenarios with identical
-inputs. It also fixes a pause/resume input leak found by audit. Gameplay,
-levels, physics and feel are unchanged — all three solver solutions still
-replay frame-exactly. See the
+**v0.2.1** makes the game frame-rate-independent, cheaper to run, and fairer
+at block edges. The simulation is a fixed 30 Hz clock driven by the `timer`
+with an accumulator and a catch-up cap, so the game plays identically at 30
+fps, at 60 fps under TurboWarp, or at any other render cadence; a
+render-cadence input latch (the LOW LATENCY setting) keeps taps exact at high
+frame rates; per-frame interpreter work is 30–39% below v0.2.0 on identical
+inputs. Landing that clips a block corner by up to a third of a cell now
+snaps on top instead of killing (reference and game changed together). The
+settings screen grew to seven rows: MUSIC, SOUND EFFECTS, PARTICLES, LOW
+LATENCY, GRAPHICS HIGH/LOW/ULTRA, SHOW FPS, BACK — TurboWarp's own CBF/fps
+knobs live in the player and cannot be changed from a project, so these rows
+are the in-game equivalents (GRAPHICS is the practical lever on weak
+devices; SHOW FPS is display-only). The row highlight now covers the whole
+row including the value pill. Gameplay, levels, physics and feel are
+unchanged apart from the corner-forgiveness rule — all three solver
+solutions still replay frame-exactly. See the
 [release verification report](docs/v0.2.1.md).
 
 **v0.2.0** prioritized clone lifecycle stability and runtime reliability. That

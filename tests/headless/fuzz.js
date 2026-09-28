@@ -11,8 +11,8 @@
  *
  *   node fuzz.js <file.sb3> [--fps N] [--seeds-per-level N]
  *
- * The default 6 seeds per level keep run_all.sh fast; the v0.2.2 audit ran
- * 150 seeds per level with zero mismatches (docs/v0.2.2.md).
+ * The default 6 seeds per level keep run_all.sh fast; the v0.2.1 audit ran
+ * 150 seeds per level with zero mismatches (docs/v0.2.1.md).
  */
 
 const {execFileSync} = require('child_process');

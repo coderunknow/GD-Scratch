@@ -171,7 +171,7 @@ async function main () {
     check('run still wins on step 659',
         `${orb.endState}@${orb.endFrame}`, 'win@659');
 
-    console.log('block corner forgiveness (v0.2.2 rule, both sides)');
+    console.log('block corner forgiveness (v0.2.1 rule, both sides)');
     // fixture holds + one extra tap on step 271: the cube falls onto a block
     // corner with its bottom 2.4 px below the surface at step 282. The old
     // rule killed there (pre-fix dist: die@283); the reference now snaps it

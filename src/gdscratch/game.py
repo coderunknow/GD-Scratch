@@ -60,7 +60,7 @@ SIM_CAP = 3
 
 # --- presentation layout ----------------------------------------------------
 TEXT_SLOTS = 56         # glyph clones; only values that change use them.
-                        # v0.2.2: 48 -> 56 so the settings values (which spend
+                        # v0.2.1: 48 -> 56 so the settings values (which spend
                         # slots 1..25) and the optional FPS overlay (49..54,
                         # clear of the play HUD's 1..46) fit one pool.
 ADV = 12.0              # px per glyph at size 100
@@ -245,7 +245,7 @@ def _declare(ctx: Ctx):
     V("musicOn", 1)
     V("sfxOn", 1)
     V("fxOn", 1)
-    # v0.2.2 settings. `lowLatency` keeps the render-cadence tap latch on
+    # v0.2.1 settings. `lowLatency` keeps the render-cadence tap latch on
     # (CBF-style); off, taps must span a physics step (30 Hz sampling).
     # `detail` scales cosmetics: 0 HIGH, 1 LOW (far parallax hidden, half
     # particles), 2 ULTRA (far parallax hidden, no particles). `showFps`
@@ -705,7 +705,7 @@ def _build_game(ctx: Ctx):
                     o.lt(V("y0"), o.add(V("py"), HALF)))
     handle_cell.define(
         # ---- solid block: land on the near face, die on any other hit.
-        # Corner forgiveness (v0.2.2, owner-directed): a fall may start up to
+        # Corner forgiveness (v0.2.1, owner-directed): a fall may start up to
         # CORNER px past the surface and still snap on top.
         o.if_(o.eq(V("ch"), "#"),
               o.if_(yover,
@@ -1429,7 +1429,7 @@ def _build_sel(ctx: Ctx):
     s = Target("Sel", layer_order=8)
     s.add_costume("sel", art.ui_selector(250, 26), "png", 250, 26, 2)
     # the settings rows carry a value pill out to stage x=162, so that screen
-    # gets a wider highlight; 250 px would stop mid-pill (v0.2.2 fix)
+    # gets a wider highlight; 250 px would stop mid-pill (v0.2.1 fix)
     s.add_costume("selWide", art.ui_selector(360, 26), "png", 360, 26, 2)
     s.visible = False
     ctx.p.sprites.append(s)

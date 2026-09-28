@@ -165,7 +165,7 @@ async function main () {
     check('sfx starts on', vars(vm).sfxOn, 1);
     const selTarget = rt.targets.find(t => t.sprite.name === 'Sel');
     // the settings value pill reaches to stage x=162; only the wide highlight
-    // costume covers it (v0.2.2 fix). currentCostume is 0-based.
+    // costume covers it (v0.2.1 fix). currentCostume is 0-based.
     check('the highlight switches to the wide costume',
         selTarget.currentCostume, 1);
     for (let i = 0; i < 7; i += 1) tap('down arrow');   // full cycle -> row 1
