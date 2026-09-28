@@ -8,6 +8,11 @@ synthesised music and SFX — all of it in a single `.sb3` that loads in Scratch
 3.32.1, on scratch.mit.edu, and in TurboWarp. No extensions, no hacks, no
 custom runtime: `project.json` declares `"extensions": []`.
 
+**v0.2.0** prioritizes clone lifecycle stability and runtime reliability. The
+release fixes a verified exponential clone-fanout bug on restart/effects, retires
+level clones on exit, and adds the missing grounded-jump sound feedback. See the
+[release verification report](docs/v0.2.0.md).
+
 | file | what it is |
 | --- | --- |
 | [`dist/GD-Scratch.sb3`](dist/GD-Scratch.sb3) | the game — 1.1 MB, stock Scratch 3 blocks only |
@@ -98,15 +103,27 @@ by character.
    real key events, then replays the solver's input schedule and compares
    `frame`, `y`, `vy`, `grav` and `grounded` **frame by frame, exactly**, against
    the Python reference. A single differing frame fails the run.
-4. **`tests/headless/menus.js`** — 40-odd assertions on the parts a player
-   touches between levels: menu navigation and wrapping, the highlight position
-   on every screen, level select, settings toggles, help, pause/resume, restart,
-   quit, the win-screen input lock, mouse activation, and that the master clock
-   advances exactly one tick per frame.
+4. **`tests/headless/menus.js`** — menu navigation and wrapping, highlight
+   positions, level select, settings toggles, help, pause/resume, restart, quit,
+   the win-screen input lock, mouse activation, jump SFX playback, and exactly
+   one master-clock tick per frame.
+5. **`tests/headless/lifecycle.js`** — restarts a level eight times, quits to the
+   menu and stresses repeated particle bursts. It counts live `scratch-vm`
+   targets to catch clone fan-out, stale level scenery and effects that fail to
+   clean up.
+6. **`tests/headless/bench.js`** — repeatable menu/gameplay/restart/death/pause
+   workloads. Reports median-of-runs step timing, opcode work per frame,
+   redraws, and peak live clone/target counts. Use the same archive and options
+   for comparisons; headless timings are host-dependent.
+7. **`tools/audit_project.py`** — static wiring inventory for broadcasts,
+   sounds, clone sites and forever loops. Its findings are leads to investigate,
+   not runtime bug reports.
 
-Last run: all three levels replayed identically (659 + 746 + 869 frames, zero
-mismatches), all menu checks passed, and the audit reported zero unknown
-opcodes, zero unresolvable calls, zero bad input names and zero VM warnings.
+For v0.2.0, the three solver schedules still replay identically (659 + 746 +
+869 frames, zero physics mismatches), menu and lifecycle checks pass, and the
+VM audit reports no unknown opcodes, unresolvable calls, bad input names or
+runtime errors. See [`docs/v0.2.0.md`](docs/v0.2.0.md) for the verified fixes,
+benchmark methodology and before/after results.
 
 ## Notes on making it actually run in Scratch
 

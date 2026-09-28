@@ -41,6 +41,12 @@ async function main () {
     const vm = makeVM();
     await boot(vm, file);
     const rt = vm.runtime;
+    const playedSounds = [];
+    const playSound = rt._primitives.sound_play;
+    rt._primitives.sound_play = function (args, util) {
+        playedSounds.push(String(args.SOUND_MENU));
+        return playSound.call(this, args, util);
+    };
 
     // count master-clock invocations so the frame rate itself is under test
     let ticks = 0;
@@ -120,6 +126,8 @@ async function main () {
     check('and back on', vars(vm).musicOn, 1);
     tap('down arrow'); tap('space');
     check('row 2 toggles sfx off', vars(vm).sfxOn, 0);
+    tap('space');
+    check('row 2 toggles sfx back on', vars(vm).sfxOn, 1);
     tap('down arrow'); tap('down arrow');
     check('row 4 is BACK', vars(vm).sel, 4);
     tap('space');
@@ -139,6 +147,14 @@ async function main () {
     console.log('pause');
     tap('space');                                       // PLAY -> level 1
     check('level started', vars(vm).state, 'play');
+    tap('r');                                           // deterministic grounded spawn
+    step(2);
+    const jumpSoundsBefore = playedSounds.filter(name => name === 'sfx jump').length;
+    tap('space');                                       // fresh grounded jump press
+    step(2);
+    check('a grounded jump plays its SFX',
+        playedSounds.filter(name => name === 'sfx jump').length > jumpSoundsBefore,
+        true);
     step(10);
     tap('p');
     check('P pauses', vars(vm).state, 'pause');

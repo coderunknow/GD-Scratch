@@ -213,6 +213,7 @@ def _declare(ctx: Ctx):
     # ui / presentation
     V("sel", 1)
     V("selCount", 4)
+    V("screenFrom", "")
     V("deadT", 0)
     V("winT", 0)
     V("shakeT", 0)
@@ -316,7 +317,6 @@ def _build_game(ctx: Ctx):
         o.replace_item(1, 0, ctx.l("BCOINS")),
         o.replace_item(2, 0, ctx.l("BCOINS")),
         o.replace_item(3, 0, ctx.l("BCOINS")),
-        o.broadcast("boot", ctx.b("boot")),
         o.broadcast("music", ctx.b("music")),
         goto_screen.call("menu"),
         comment="Runs once when the green flag is clicked.",
@@ -445,7 +445,8 @@ def _build_game(ctx: Ctx):
         # 1. jump, but only while resting on something
         o.if_(o.allof(o.eq(V("grounded"), 1), o.eq(V("held"), 1)),
               o.set_var(V("vy"), o.mul(JUMP_V, V("grav"))),
-              o.set_var(V("grounded"), 0)),
+              o.set_var(V("grounded"), 0),
+              o.broadcast("sfx jump", ctx.b("sfx jump"))),
         # 2. gravity
         o.set_var(V("vy"), o.sub(V("vy"), o.mul(GRAVITY, V("grav")))),
         # 3. terminal speed, kept under CELL so nothing can tunnel
@@ -698,6 +699,16 @@ def _build_game(ctx: Ctx):
 
     gs = goto_screen.arg(0)
     goto_screen.define(
+        # Invalidate world/environment clones when backing out of a run. The
+        # clone loops retire objects by comparing their creation generation.
+        # Without this, Q from pause/win/death leaves level scenery animating
+        # behind the menu until the next level happens to start.
+        o.set_var(V("screenFrom"), V("state")),
+        o.if_(o.anyof(o.eq(V("screenFrom"), "play"),
+                      o.anyof(o.eq(V("screenFrom"), "dead"),
+                              o.anyof(o.eq(V("screenFrom"), "pause"),
+                                      o.eq(V("screenFrom"), "win")))),
+              o.change_var(V("gen"), 1)),
         o.set_var(V("state"), gs),
         o.set_var(V("sel"), 1),
         o.switch_backdrop_var(gs, "menu"),
@@ -1020,21 +1031,27 @@ def _build_ground(ctx: Ctx):
     ctx.p.sprites.append(s)
     V = ctx.v
     s.var("wGen", 0)
+    s.var("isClone", 0)
 
-    s.script(o.when_flag(), o.hide(), x=30, y=30)
+    s.script(o.when_flag(), o.hide(), o.set_var(s.var("isClone"), 0), x=30, y=30)
 
+    # Broadcast hats are inherited by clones in Scratch. Only the original
+    # controller may respond: otherwise every live strip clone also spawns
+    # four more strips on every restart (exponential clone growth).
     s.script(o.when_broadcast("level start", ctx.b("level start")),
-             o.set_var(s.var("wGen"), V("gen")),
-             o.switch_costume_var(o.join("floor", V("level")), s, "floor1"),
-             o.goto_xy(0, GY), o.create_clone("_myself_"),
-             o.goto_xy(480, GY), o.create_clone("_myself_"),
-             o.switch_costume_var(o.join("ceil", V("level")), s, "ceil1"),
-             o.goto_xy(0, CEIL_Y), o.create_clone("_myself_"),
-             o.goto_xy(480, CEIL_Y), o.create_clone("_myself_"),
+             o.if_(o.eq(s.var("isClone"), 0),
+                   o.set_var(s.var("wGen"), V("gen")),
+                   o.switch_costume_var(o.join("floor", V("level")), s, "floor1"),
+                   o.goto_xy(0, GY), o.create_clone("_myself_"),
+                   o.goto_xy(480, GY), o.create_clone("_myself_"),
+                   o.switch_costume_var(o.join("ceil", V("level")), s, "ceil1"),
+                   o.goto_xy(0, CEIL_Y), o.create_clone("_myself_"),
+                   o.goto_xy(480, CEIL_Y), o.create_clone("_myself_")),
              x=30, y=120,
-             comment="Two 480px strips per surface tile the scroll seamlessly.")
+             comment="Only the original responds; clones must not fan out broadcasts.")
 
     s.script(o.as_clone(),
+             o.set_var(s.var("isClone"), 1),
              o.show(),
              o.forever(
                  o.if_(o.not_(o.eq(s.var("wGen"), V("gen"))), o.delete_clone()),
@@ -1054,17 +1071,21 @@ def _build_far(ctx: Ctx):
     ctx.p.sprites.append(s)
     V = ctx.v
     s.var("wGen", 0)
+    s.var("isClone", 0)
 
-    s.script(o.when_flag(), o.hide(), x=30, y=30)
+    s.script(o.when_flag(), o.hide(), o.set_var(s.var("isClone"), 0), x=30, y=30)
 
     s.script(o.when_broadcast("level start", ctx.b("level start")),
-             o.set_var(s.var("wGen"), V("gen")),
-             o.switch_costume_var(o.join("far", V("level")), s, "far1"),
-             o.goto_xy(0, 0), o.create_clone("_myself_"),
-             o.goto_xy(480, 0), o.create_clone("_myself_"),
-             x=30, y=120)
+             o.if_(o.eq(s.var("isClone"), 0),
+                   o.set_var(s.var("wGen"), V("gen")),
+                   o.switch_costume_var(o.join("far", V("level")), s, "far1"),
+                   o.goto_xy(0, 0), o.create_clone("_myself_"),
+                   o.goto_xy(480, 0), o.create_clone("_myself_")),
+             x=30, y=120,
+             comment="Only the original responds; clones must not fan out broadcasts.")
 
     s.script(o.as_clone(),
+             o.set_var(s.var("isClone"), 1),
              o.show(),
              o.forever(
                  o.if_(o.not_(o.eq(s.var("wGen"), V("gen"))), o.delete_clone()),
@@ -1087,29 +1108,35 @@ def _build_fx(ctx: Ctx):
     for name in ("pVx", "pVy", "pLife", "pSize", "pName",
                  "myVx", "myVy", "myLife"):
         s.var(name, 0)
+    s.var("isClone", 0)
 
-    s.script(o.when_flag(), o.hide(), x=30, y=30)
+    s.script(o.when_flag(), o.hide(), o.set_var(s.var("isClone"), 0), x=30, y=30)
 
+    # Particle clones inherit broadcast hats too. Restrict the burst factory
+    # to the original so each boom creates exactly fxN particles, not a cascade.
     s.script(o.when_broadcast("boom", ctx.b("boom")),
-             o.set_var(V("tI"), 1),
-             o.repeat(V("fxN"),
-                      o.set_var(s.var("pVx"), o.div(o.rand(-90, 90), 10)),
-                      o.set_var(s.var("pVy"), o.div(o.rand(-20, 110), 10)),
-                      o.set_var(s.var("pLife"), o.rand(14, 30)),
-                      o.set_var(s.var("pSize"), o.rand(70, 130)),
-                      # first particle of every burst is the shockwave ring
-                      o.set_var(s.var("pName"), "spark"),
-                      o.if_(o.eq(o.rand(1, 3), 3),
-                            o.set_var(s.var("pName"), "shard")),
-                      o.if_(o.eq(V("tI"), 1), o.set_var(s.var("pName"), "ring")),
-                      o.switch_costume_var(s.var("pName"), s, "spark"),
-                      o.goto_xy(o.add(V("fxAtX"), o.div(o.rand(-12, 12), 2)),
-                                o.add(V("fxAtY"), o.div(o.rand(-12, 12), 2))),
-                      o.create_clone("_myself_"),
-                      o.change_var(V("tI"), 1)),
-             x=30, y=120)
+             o.if_(o.eq(s.var("isClone"), 0),
+                   o.set_var(V("tI"), 1),
+                   o.repeat(V("fxN"),
+                            o.set_var(s.var("pVx"), o.div(o.rand(-90, 90), 10)),
+                            o.set_var(s.var("pVy"), o.div(o.rand(-20, 110), 10)),
+                            o.set_var(s.var("pLife"), o.rand(14, 30)),
+                            o.set_var(s.var("pSize"), o.rand(70, 130)),
+                            # first particle of every burst is the shockwave ring
+                            o.set_var(s.var("pName"), "spark"),
+                            o.if_(o.eq(o.rand(1, 3), 3),
+                                  o.set_var(s.var("pName"), "shard")),
+                            o.if_(o.eq(V("tI"), 1), o.set_var(s.var("pName"), "ring")),
+                            o.switch_costume_var(s.var("pName"), s, "spark"),
+                            o.goto_xy(o.add(V("fxAtX"), o.div(o.rand(-12, 12), 2)),
+                                      o.add(V("fxAtY"), o.div(o.rand(-12, 12), 2))),
+                            o.create_clone("_myself_"),
+                            o.change_var(V("tI"), 1))),
+             x=30, y=120,
+             comment="Only the original handles boom; effects do not recurse.")
 
     s.script(o.as_clone(),
+             o.set_var(s.var("isClone"), 1),
              o.set_var(s.var("myVx"), s.var("pVx")),
              o.set_var(s.var("myVy"), s.var("pVy")),
              o.set_var(s.var("myLife"), s.var("pLife")),
