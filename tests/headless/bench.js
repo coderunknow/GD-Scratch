@@ -375,7 +375,13 @@ async function main () {
              !/\u001b\[/.test(w) && !/vm.warn/.test(w));
     const json = JSON.stringify(report, null, 2);
     if (args.includes('--json')) {
-        fs.writeFileSync(args[args.indexOf('--json') + 1] || 'bench.json', json);
+        // --json [path]: an optional output path may follow, but only if it
+        // is not another flag (a trailing --json must not swallow it)
+        const jsonIdx = args.indexOf('--json');
+        const jsonNext = jsonIdx !== -1 ? args[jsonIdx + 1] : undefined;
+        fs.writeFileSync(
+            jsonNext && !jsonNext.startsWith('--') ? jsonNext : 'bench.json',
+            json);
     }
     process.stdout.write(`${json}\n`);
 }
