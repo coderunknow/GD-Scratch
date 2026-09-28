@@ -4,8 +4,8 @@
 #   2. deterministic synthesized audio assets
 #   3. static project wiring (broadcasts, sounds, procedures)
 #   4. structural validity inside the real scratch-vm
-#   5. solved frame-by-frame replays and player-facing menus
-#   6. clone lifecycle and repeated-effect stress behavior
+#   5. solved frame-by-frame replays and player-facing menus (at 30 and 60 fps)
+#   6. glyph-pool consistency, clone lifecycle and repeated-effect stress
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -56,6 +56,8 @@ sys.exit(1 if d.get('failed') else 0)"
     done
     (cd tests/headless && node menus.js "../../$FILE") | tail -1
     (cd tests/headless && node menus.js "../../$FILE" --fps 60) | tail -1
+    (cd tests/headless && node text.js "../../$FILE") | tail -1
+    (cd tests/headless && node text.js "../../$FILE" --fps 60) | tail -1
     (cd tests/headless && node lifecycle.js "../../$FILE") |
         grep -E '^PASS:|^FAIL:'
     (cd tests/headless && node lifecycle.js "../../$FILE" --fps 60) |

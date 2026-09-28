@@ -804,6 +804,7 @@ def _build_game(ctx: Ctx):
         o.if_(o.eq(V("actSt"), "pause"),
               o.if_(o.eq(V("sel"), 1),
                     o.set_var(V("state"), "play"),
+                    o.set_var(V("tapLatch"), 0),
                     o.set_var(V("track"), o.join("music", V("level"))),
                     o.switch_backdrop_var(o.join("bg", V("level")), "bg1")),
               o.if_(o.eq(V("sel"), 2), start_level.call(V("level"))),
@@ -959,6 +960,11 @@ def _build_game(ctx: Ctx):
                        o.switch_backdrop("pause")],
                       [o.if_(o.eq(V("state"), "pause"),
                              o.set_var(V("state"), "play"),
+                             # the space/enter press that resumed (or any tap
+                             # made while paused) must not reach the sim: a
+                             # latched edge here would phantom-jump or trigger
+                             # an orb on the first step back
+                             o.set_var(V("tapLatch"), 0),
                              o.set_var(V("track"), o.join("music", V("level"))),
                              o.switch_backdrop_var(o.join("bg", V("level")),
                                                    "bg1"))]),

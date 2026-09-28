@@ -59,10 +59,44 @@ async function main () {
 
     // count master-clock invocations so the frame rate itself is under test
     let ticks = 0;
+    // optionally capture the jump input the *first* `step play` after arming
+    // actually consumed -- this is the only way to observe a stale edge that
+    // lives for exactly one step
+    let stepPlayCapture = null;
+    let captureArm = false;
     const call = rt._primitives.procedures_call;
     rt._primitives.procedures_call = function (args, util) {
         if (args.mutation.proccode === 'tick') ticks += 1;
+        if (captureArm && args.mutation.proccode === 'step play') {
+            const stg = rt.targets.find(t => t.isStage);
+            const gv = n => {
+                for (const id in stg.variables) {
+                    if (stg.variables[id].name === n) return stg.variables[id].value;
+                }
+                return undefined;
+            };
+            stepPlayCapture = {held: gv('held'), jumpEdge: gv('jumpEdge')};
+            captureArm = false;
+        }
         return call.call(rt._primitives.procedures_call, args, util);
+    };
+
+    // count music restarts: the looping music thread calls stop-all-sounds
+    // exactly once per `music` broadcast
+    let musicRestarts = 0;
+    const stopAll = rt._primitives.sound_stopallsounds;
+    rt._primitives.sound_stopallsounds = function (args, util) {
+        musicRestarts += 1;
+        return stopAll.call(this, args, util);
+    };
+
+    const stageList = name => {
+        const stg = rt.targets.find(t => t.isStage);
+        for (const id in stg.variables) {
+            const v = stg.variables[id];
+            if (v.name === name && v.type === 'list') return v.value;
+        }
+        return undefined;
     };
 
     const local = (sprite, name) => {
@@ -194,6 +228,59 @@ async function main () {
     check('R restarts the level', Number(vars(vm).frame) <= 2, true);
     check('attempt counter increments', Number(vars(vm).attempt) >= 2, true);
 
+    console.log('pause/resume input hygiene');
+    step(4);
+    tap('p');
+    check('P pauses (hygiene setup)', vars(vm).state, 'pause');
+    step(3);                          // the P press/release settles
+    stepPlayCapture = null;
+    captureArm = true;
+    tap('space');                     // resume with the same key that jumps
+    check('space resumes from pause', vars(vm).state, 'play');
+    // at 60 fps the resume frame may run no physics step; wait for the first
+    // one so the capture always reflects the step that resumed play
+    for (let i = 0; i < 10 && stepPlayCapture === null; i += 1) step();
+    captureArm = false;
+    check(`the first play step after resume saw no jump input ` +
+          `(got ${JSON.stringify(stepPlayCapture)})`,
+          stepPlayCapture !== null &&
+          Number(stepPlayCapture.held) === 0 &&
+          Number(stepPlayCapture.jumpEdge) === 0,
+          true);
+    step(3);
+    check(`the cube did not jump on resume ` +
+          `(py=${vars(vm).py} grounded=${vars(vm).grounded})`,
+          Number(vars(vm).py) === -105 && Number(vars(vm).grounded) === 1,
+          true);
+
+    tap('p');
+    check('P pauses again (mouse setup)', vars(vm).state, 'pause');
+    step(2);
+    rt.ioDevices.mouse.postData({isDown: true, x: 0, y: 0});
+    step();
+    rt.ioDevices.mouse.postData({isDown: false, x: 0, y: 0});
+    check('a mouse click activates the pause RESUME row', vars(vm).state, 'play');
+
+    console.log('keys during death');
+    for (let i = 0; i < 200 && vars(vm).state === 'play'; i += 1) step();
+    check('the cube died', vars(vm).state, 'dead');
+    const bestsBefore = stageList('BESTS');
+    tap('p');
+    check('P is ignored while dead', vars(vm).state, 'dead');
+    tap('r');
+    step(2);
+    check('R during death restarts at once', vars(vm).state, 'play');
+    check(`the death recorded a best progress (BESTS[1]=${bestsBefore[0]})`,
+          Number(bestsBefore[0]) > 0, true);
+
+    console.log('music restarts with the level');
+    const restartsBefore = musicRestarts;
+    tap('r');
+    step(6);
+    check(`restarting the level restarts the music ` +
+          `(${restartsBefore} -> ${musicRestarts})`,
+          musicRestarts > restartsBefore, true);
+
     console.log('Q mid-level');
     step(5);
     tap('q');
@@ -211,6 +298,8 @@ async function main () {
     };
     setV('state', 'win'); setV('winT', 26); setV('sel', 1); setV('selCount', 3);
     step(2);
+    tap('r');
+    check('R is ignored on the win screen', vars(vm).state, 'win');
     tap('space');
     check('input is ignored while winT is running', vars(vm).state, 'win');
     // The lock is paced in physics steps: measure how many render frames the
