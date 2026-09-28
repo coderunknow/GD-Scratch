@@ -40,18 +40,54 @@ function makeVM () {
  * normally comes from `Date.now()`. Driving the VM from a tight loop would make
  * "one frame" take as long as the host happens to be busy, so a `wait 0.028`
  * would need a variable number of `_step()` calls before it expired. Advancing
- * the clock by hand makes one `_step()` == 33.33 ms == exactly one game tick,
- * which is what lets replay.js compare the generated game against the Python
- * reference solver frame for frame.
+ * the clock by hand makes one `_step()` == 1000/fps ms == exactly one render
+ * frame, which is what lets replay.js compare the generated game against the
+ * Python reference solver frame for frame.
+ *
+ * The game's simulation-time accumulator reads Scratch's `timer` block, which
+ * scratch-vm serves from `ioDevices.clock.projectTimer()` -- and *that* is
+ * derived from `runtime.currentMSecs` too (clock.js constructs its Timer with
+ * `now: () => runtime.currentMSecs`). simClock alone would therefore make the
+ * timer deterministic as well, but it accumulates `currentStepTime` by repeated
+ * floating-point addition, so `floor(timer * 30)` occasionally strays an
+ * epsilon across a tick boundary (measured: 8 off-by-one events in 2000 frames
+ * at 30 fps, and systematic half-tick errors at 60 fps). To keep the headless
+ * clock exact, projectTimer is stubbed directly: on the n-th `_step()` after a
+ * green flag it returns `(n - 0.5) / fps` seconds. The half-frame offset keeps
+ * every value exactly 0.25 ticks away from a 30 Hz boundary (these are binary-
+ * exact numbers), so `floor(timer * 30)` is 1 on every frame at 30 fps and
+ * alternates 0,1,0,1... at 60 fps -- with zero float luck involved. A real
+ * browser clock is never float-exact either; the offset mimics a frame that
+ * arrives half a frame late.
+ *
+ * The mapping is explicit and tested:
+ *     30 fps: render frame n -> n / 30 simulated seconds
+ *     60 fps: render frame n -> n / 60 simulated seconds
  */
-function simClock (vm) {
+function simClock (vm, fps = 30) {
     const rt = vm.runtime;
-    rt.currentStepTime = STEP_MS;
+    rt.currentStepTime = 1000 / fps;
     let sim = 0;
     rt.updateCurrentMSecs = function () {
         sim += rt.currentStepTime;
         rt.currentMSecs = sim;
         return sim;
+    };
+    // Deterministic `timer` / `days since 2000` stand-in for the accumulator.
+    let stepsSinceFlag = 0;
+    const clock = rt.ioDevices.clock;
+    clock.projectTimer = function () {
+        return Math.max(0, (stepsSinceFlag - 0.5) / fps);
+    };
+    const rawStep = rt._step.bind(rt);
+    rt._step = function () {
+        stepsSinceFlag += 1;
+        return rawStep();
+    };
+    const rawFlag = vm.greenFlag.bind(vm);
+    vm.greenFlag = function () {
+        stepsSinceFlag = 0;
+        return rawFlag();
     };
     return rt;
 }
@@ -120,12 +156,13 @@ function vars (vm) {
 
 /**
  * Load an .sb3 and put the VM into the deterministic test configuration:
- * renderer redraws emulated, wall clock simulated.
+ * renderer redraws emulated, wall clock simulated at `fps` render frames per
+ * simulated second.
  */
-async function boot (vm, file) {
+async function boot (vm, file, fps = 30) {
     await vm.loadProject(fs.readFileSync(file));
     stubRenderer(vm);
-    simClock(vm);
+    simClock(vm, fps);
     return vm;
 }
 

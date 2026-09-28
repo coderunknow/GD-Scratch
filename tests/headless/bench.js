@@ -161,6 +161,21 @@ const SCENARIOS = {
         return {_replay: vm, _level: 3, _holds: fx.holds};
     },
 
+    /** Level 1 with GRAPHICS=LOW: the cheap-cosmetics preset players on
+     *  weak devices would pick (far parallax hidden, half particles). */
+    level1_detail_low (vm) {
+        enterLevel(vm, 1, false);
+        const rt = vm.runtime;
+        const stage = rt.targets.find(t => t.isStage);
+        for (const id in stage.variables) {
+            if (stage.variables[id].name === 'detail') {
+                stage.variables[id].value = 1;
+            }
+        }
+        const fx = fixture(1);
+        return {_replay: vm, _level: 1, _holds: fx.holds};
+    },
+
     /** Restart spam: the most common thing a player does after a death. */
     stress_restart (vm) {
         enterLevel(vm, 1);
@@ -360,7 +375,13 @@ async function main () {
              !/\u001b\[/.test(w) && !/vm.warn/.test(w));
     const json = JSON.stringify(report, null, 2);
     if (args.includes('--json')) {
-        fs.writeFileSync(args[args.indexOf('--json') + 1] || 'bench.json', json);
+        // --json [path]: an optional output path may follow, but only if it
+        // is not another flag (a trailing --json must not swallow it)
+        const jsonIdx = args.indexOf('--json');
+        const jsonNext = jsonIdx !== -1 ? args[jsonIdx + 1] : undefined;
+        fs.writeFileSync(
+            jsonNext && !jsonNext.startsWith('--') ? jsonNext : 'bench.json',
+            json);
     }
     process.stdout.write(`${json}\n`);
 }
