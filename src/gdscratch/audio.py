@@ -129,7 +129,7 @@ def sfx_jump() -> bytes:
         f = 380 * (1 + 2.6 * (t / 0.13))
         env = (1 - i / n) ** 1.4
         buf[i] += math.sin(2 * math.pi * f * t) * 0.42 * env
-    noise(buf, 0.0, 0.05, 0.09, 2.0)
+    noise(buf, 0.0, 0.05, 0.09, 2.0, random.Random(11))
     _declick(buf)
     return _encode(buf)
 
@@ -162,7 +162,7 @@ def sfx_portal() -> bytes:
         f = 300 + 1400 * (0.5 + 0.5 * math.sin(t * 26))
         env = (1 - i / n) ** 1.2
         buf[i] += math.sin(2 * math.pi * f * t) * 0.28 * env
-    noise(buf, 0.0, 0.2, 0.10, 2.0)
+    noise(buf, 0.0, 0.2, 0.10, 2.0, random.Random(23))
     _declick(buf)
     return _encode(buf)
 
@@ -190,7 +190,7 @@ def sfx_orb() -> bytes:
 def sfx_click() -> bytes:
     buf = _buffer(0.09)
     tone(buf, 0.0, 0.05, 84, 0.26, "square", release=0.02)
-    noise(buf, 0.0, 0.02, 0.12, 2.0)
+    noise(buf, 0.0, 0.02, 0.12, 2.0, random.Random(31))
     _declick(buf)
     return _encode(buf)
 
@@ -210,7 +210,7 @@ def sfx_win() -> bytes:
         tone(buf, at, 0.34, midi, 0.24, "square", release=0.14)
         tone(buf, at, 0.34, midi - 12, 0.16, "tri", release=0.14)
     tone(buf, 0.9, 0.55, 96, 0.22, "square", release=0.4)
-    noise(buf, 0.9, 0.35, 0.09, 1.5)
+    noise(buf, 0.9, 0.35, 0.09, 1.5, random.Random(47))
     _declick(buf)
     return _encode(buf)
 
