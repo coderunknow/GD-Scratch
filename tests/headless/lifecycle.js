@@ -1,7 +1,10 @@
 /**
  * Clone-lifecycle regression and stress test.
  *
- *   node lifecycle.js <file.sb3>
+ *   node lifecycle.js <file.sb3> [--fps N]
+ *
+ * --fps runs the same stress coverage under a deterministic N-fps render clock
+ * (see vmlib.simClock); clone populations must stay bounded at both rates.
  *
  * Reproductions:
  *  1. Start a level, then restart it repeatedly. Ground/Far/FX broadcast hats
@@ -27,9 +30,12 @@ console.error = (...a) => {
 };
 console.warn = () => {};
 
-const file = process.argv[2];
+const argList = process.argv.slice(2);
+const fpsIdx = argList.indexOf('--fps');
+const FPS = fpsIdx !== -1 ? Number(argList[fpsIdx + 1]) : 30;
+const file = argList[0];
 if (!file) {
-    console.log('usage: node lifecycle.js <file.sb3>');
+    console.log('usage: node lifecycle.js <file.sb3> [--fps N]');
     process.exit(2);
 }
 
@@ -43,7 +49,7 @@ function check (label, ok, evidence = '') {
 
 async function main () {
     const vm = makeVM();
-    await boot(vm, file);
+    await boot(vm, file, FPS);
     const rt = vm.runtime;
     const step = (n = 1) => { for (let i = 0; i < n; i += 1) rt._step(); };
     const tap = key => {
@@ -54,7 +60,7 @@ async function main () {
         t => !t.isOriginal && t.sprite.name === name).length;
     const totalClones = () => rt.targets.filter(t => !t.isOriginal).length;
 
-    console.log(`clone lifecycle: ${file.split('/').pop()}`);
+    console.log(`clone lifecycle: ${file.split('/').pop()} @${FPS}fps`);
     vm.greenFlag();
     step(4);
     check('green flag reaches title', vars(vm).state === 'menu', vars(vm).state);

@@ -48,12 +48,17 @@ sys.exit(1 if d.get('failed') else 0)"
 
     echo
     echo "=== 6. replay + menus + lifecycle: $FILE ==="
+    # replay.js runs every fixture under both the 30 fps and 60 fps
+    # deterministic clocks and asserts the physics/render pacing invariants.
     for L in 1 2 3; do
         (cd tests/headless && node replay.js "../../$FILE" "../fixtures/level${L}_solution.json") |
             grep -E '^PASS|^FAIL'
     done
     (cd tests/headless && node menus.js "../../$FILE") | tail -1
+    (cd tests/headless && node menus.js "../../$FILE" --fps 60) | tail -1
     (cd tests/headless && node lifecycle.js "../../$FILE") |
+        grep -E '^PASS:|^FAIL:'
+    (cd tests/headless && node lifecycle.js "../../$FILE" --fps 60) |
         grep -E '^PASS:|^FAIL:'
 done
 

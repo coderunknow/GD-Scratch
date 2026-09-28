@@ -12,7 +12,13 @@
  *   - P being unable to pause (same fall-through, as two sequential ifs),
  *   - the win screen accepting input before its lock expired.
  *
- *   node menus.js <file.sb3>
+ *   node menus.js <file.sb3> [--fps N]
+ *
+ * With --fps the whole scenario runs under a deterministic N-fps render clock
+ * (see vmlib.simClock). The death countdown and win input lock are wall-clock
+ * paced (42 / 26 physics steps), so at 60 fps they must last twice as many
+ * render frames as at 30 fps; the checks below compute their expected render-
+ * frame durations from the fps under test.
  */
 
 const {makeVM, boot, press, vars} = require('./vmlib');
@@ -22,9 +28,12 @@ const realError = console.error;
 console.error = (...a) => { problems.push(a.map(String).join(' ')); realError(...a); };
 console.warn = () => {};
 
-const file = process.argv[2];
+const argList = process.argv.slice(2);
+const fpsIdx = argList.indexOf('--fps');
+const FPS = fpsIdx !== -1 ? Number(argList[fpsIdx + 1]) : 30;
+const file = argList[0];
 if (!file) {
-    console.log('usage: node menus.js <file.sb3>');
+    console.log('usage: node menus.js <file.sb3> [--fps N]');
     process.exit(2);
 }
 
@@ -39,7 +48,7 @@ function check (label, got, want) {
 
 async function main () {
     const vm = makeVM();
-    await boot(vm, file);
+    await boot(vm, file, FPS);
     const rt = vm.runtime;
     const playedSounds = [];
     const playSound = rt._primitives.sound_play;
@@ -70,7 +79,7 @@ async function main () {
     const tap = key => { press(vm, key, true); step(); press(vm, key, false); step(); };
     const selY = () => local('Sel', 'rowY');
 
-    console.log(`${file.split('/').pop()}`);
+    console.log(`${file.split('/').pop()} @${FPS}fps`);
     vm.greenFlag();
     step(4);
 
@@ -204,9 +213,44 @@ async function main () {
     step(2);
     tap('space');
     check('input is ignored while winT is running', vars(vm).state, 'win');
-    step(30);                                           // let winT expire
+    // The lock is paced in physics steps: measure how many render frames the
+    // remaining lock takes and require it to scale with the frame rate.
+    const lockStart = Number(vars(vm).winT);
+    let lockFrames = 0;
+    for (let i = 0; i < 200 && Number(vars(vm).winT) >= 1; i += 1) { step(); lockFrames += 1; }
+    const wantLock = Math.round(lockStart * FPS / 30);
+    check(`the win lock lasts ~${wantLock} render frames at ${FPS} fps ` +
+          `(${lockFrames} observed)`,
+          Math.abs(lockFrames - wantLock) <= 2, true);
     tap('space');
     check('and accepted once it expires', vars(vm).state !== 'win', true);
+
+    console.log('death countdown pacing');
+    // Level 1 is open again after the win screen advanced to level 2 -- go
+    // back to level 1 through the level select so the first spike is known.
+    vm.greenFlag();
+    step(4);
+    tap('space');                                       // PLAY
+    check('level 1 running', vars(vm).state, 'play');
+    // no input at all: the cube hits the first spike and dies
+    let deathFrames = -1;
+    let restartFrames = -1;
+    let seen = 0;
+    for (let i = 0; i < 400; i += 1) {
+        step();
+        const st = vars(vm).state;
+        if (st === 'dead' && deathFrames < 0) deathFrames = seen;
+        if (st !== 'dead' && deathFrames >= 0) { restartFrames = seen; break; }
+        seen += 1;
+    }
+    check('the cube died on the first spike', deathFrames >= 0, true);
+    // 42 physics steps of countdown: 42 * FPS/30 render frames (+/- 2 for the
+    // frame the death landed on)
+    const wantDead = Math.round(42 * FPS / 30);
+    const deadSpan = restartFrames >= 0 ? restartFrames - deathFrames : -1;
+    check(`the death countdown lasts ~${wantDead} render frames at ${FPS} fps`,
+          Math.abs(deadSpan - wantDead) <= 2, true);
+    check('the level auto-restarted', vars(vm).state, 'play');
 
     console.log('mouse activation');
     vm.greenFlag();
