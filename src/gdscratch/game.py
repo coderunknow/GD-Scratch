@@ -37,6 +37,7 @@ CEIL_Y = levels.CEIL_Y
 ROWS = levels.ROWS
 PLAYER_X = levels.PLAYER_X
 SPEED = levels.SPEED
+CORNER = levels.CORNER_FORGIVE
 GRAVITY = levels.GRAVITY
 JUMP_V = levels.JUMP_V
 PAD_V = levels.PAD_V
@@ -58,13 +59,17 @@ OOB = 210.0             # this far out of the world is death
 SIM_CAP = 3
 
 # --- presentation layout ----------------------------------------------------
-TEXT_SLOTS = 48         # glyph clones; only values that change use them
+TEXT_SLOTS = 56         # glyph clones; only values that change use them.
+                        # v0.2.2: 48 -> 56 so the settings values (which spend
+                        # slots 1..25) and the optional FPS overlay (49..54,
+                        # clear of the play HUD's 1..46) fit one pool.
 ADV = 12.0              # px per glyph at size 100
 BAR_LEN = 16            # progress-bar cells
 SPAWN_AHEAD = 300.0     # px of level kept materialised past the right edge
 DESPAWN_X = -280.0      # tiles retire once this far off the left edge
 
-SETTINGS_LABELS = ["MUSIC", "SOUND EFFECTS", "PARTICLES", "BACK"]
+SETTINGS_LABELS = ["MUSIC", "SOUND EFFECTS", "PARTICLES", "LOW LATENCY",
+                   "GRAPHICS", "SHOW FPS", "BACK"]
 HELP_LINES = [
     "SPACE OR UP OR CLICK TO JUMP",
     "HOLD IT TO JUMP AGAIN ON LANDING",
@@ -80,13 +85,14 @@ HELP_LINES = [
 SEL_Y = {
     "menu": [30, -2, -34, -66],
     "select": [64, 18, -28],
-    "settings": [62, 24, -14, -52],
+    "settings": [84, 54, 24, -6, -36, -66, -96],
     "pause": [20, -14, -48],
     "win": [-36, -70, -104],
 }
-SEL_COUNT = {"menu": 4, "select": 3, "settings": 4, "pause": 3, "help": 1,
+SEL_COUNT = {"menu": 4, "select": 3, "settings": 7, "pause": 3, "help": 1,
              "win": 3}
-SETTINGS_VAL_Y = [62, 24, -14]
+SETTINGS_VAL_Y = [84, 54, 24, -6, -36, -66]
+DETAIL_NAMES = {0: "HIGH", 1: "LOW", 2: "ULTRA"}
 SELECT_ROW_Y = SEL_Y["select"]
 
 
@@ -239,6 +245,18 @@ def _declare(ctx: Ctx):
     V("musicOn", 1)
     V("sfxOn", 1)
     V("fxOn", 1)
+    # v0.2.2 settings. `lowLatency` keeps the render-cadence tap latch on
+    # (CBF-style); off, taps must span a physics step (30 Hz sampling).
+    # `detail` scales cosmetics: 0 HIGH, 1 LOW (far parallax hidden, half
+    # particles), 2 ULTRA (far parallax hidden, no particles). `showFps`
+    # draws a live render-fps readout in play.
+    V("lowLatency", 1)
+    V("detail", 0)
+    V("showFps", 0)
+    V("fpsShow", "")
+    V("fpsStr", "")
+    V("fpsN", 0)
+    V("fpsT", 0.0)
     ctx.l("BESTS", [0, 0, 0])
     ctx.l("BCOINS", [0, 0, 0])
     ctx.l("GOT")
@@ -353,6 +371,13 @@ def _build_game(ctx: Ctx):
         o.set_var(V("musicOn"), 1),
         o.set_var(V("sfxOn"), 1),
         o.set_var(V("fxOn"), 1),
+        o.set_var(V("lowLatency"), 1),
+        o.set_var(V("detail"), 0),
+        o.set_var(V("showFps"), 0),
+        o.set_var(V("fpsShow"), ""),
+        o.set_var(V("fpsStr"), ""),
+        o.set_var(V("fpsN"), 0),
+        o.set_var(V("fpsT"), 0.0),
         o.set_var(V("coinsTotal"), 0),
         # the simulation clock and the input latch start clean on every flag
         o.set_var(V("lastTick"), 0),
@@ -406,6 +431,9 @@ def _build_game(ctx: Ctx):
         o.set_var(V("usedOrb"), 0),
         o.set_var(V("shakeT"), 0),
         o.set_var(V("filled"), -1),
+        # force the optional FPS readout to repaint even if its string is
+        # unchanged (the settings screen shares its text slot)
+        o.set_var(V("fpsStr"), ""),
         o.set_var(V("spawnCol"), 0),
         o.set_var(V("state"), "play"),
         o.set_var(V("track"), o.join("music", n)),
@@ -451,6 +479,10 @@ def _build_game(ctx: Ctx):
                1, 0),
         o.if_(o.allof(o.eq(V("raw"), 1), o.eq(V("rawPrev"), 0)),
               o.set_var(V("tapLatch"), 1)),
+        # LOW LATENCY off = classic 30 Hz sampling: taps must span a physics
+        # step to count (saves nothing measurable; it is a preference).
+        o.if_(o.eq(V("lowLatency"), 0),
+              o.set_var(V("tapLatch"), 0)),
         o.set_var(V("rawPrev"), V("raw")),
     )
 
@@ -493,6 +525,15 @@ def _build_game(ctx: Ctx):
         o.set_var(V("now30"), o.floor_(o.mul(o.timer(), 30))),
         o.set_var(V("due"), o.sub(V("now30"), V("lastTick"))),
         o.set_var(V("lastTick"), V("now30")),
+        # render-fps meter (SHOW FPS): counted over ~0.5 s windows of real
+        # rendered frames; this is the host's render cadence, not sim speed
+        o.change_var(V("fpsN"), 1),
+        o.if_(o.gt(o.sub(o.timer(), V("fpsT")), 0.5),
+              o.set_var(V("fpsShow"),
+                        o.join("FPS ", o.round_(
+                            o.div(V("fpsN"), o.sub(o.timer(), V("fpsT")))))),
+              o.set_var(V("fpsT"), o.timer()),
+              o.set_var(V("fpsN"), 0)),
         o.if_(o.gt(V("due"), SIM_CAP), o.set_var(V("due"), SIM_CAP)),
         o.set_var(V("stepsRun"), 0),
         # due is already capped at SIM_CAP, so this loop is bounded
@@ -663,19 +704,21 @@ def _build_game(ctx: Ctx):
     yover = o.allof(o.lt(o.sub(V("py"), HALF), V("y1")),
                     o.lt(V("y0"), o.add(V("py"), HALF)))
     handle_cell.define(
-        # ---- solid block: land on the near face, die on any other hit
+        # ---- solid block: land on the near face, die on any other hit.
+        # Corner forgiveness (v0.2.2, owner-directed): a fall may start up to
+        # CORNER px past the surface and still snap on top.
         o.if_(o.eq(V("ch"), "#"),
               o.if_(yover,
                     o.ifelse(o.eq(V("grav"), 1),
                              [o.ifelse(o.allof(
-                                 ge(o.sub(V("prevY"), HALF), o.sub(V("y1"), EPS)),
+                                 ge(o.sub(V("prevY"), HALF), o.sub(V("y1"), CORNER)),
                                  le(V("vy"), 0)),
                                  [o.set_var(V("py"), o.add(V("y1"), HALF)),
                                   o.set_var(V("vy"), 0.0),
                                   o.set_var(V("grounded"), 1)],
                                  [o.set_var(V("died"), 1)])],
                              [o.ifelse(o.allof(
-                                 le(o.add(V("prevY"), HALF), o.add(V("y0"), EPS)),
+                                 le(o.add(V("prevY"), HALF), o.add(V("y0"), CORNER)),
                                  ge(V("vy"), 0)),
                                  [o.set_var(V("py"), o.sub(V("y0"), HALF)),
                                   o.set_var(V("vy"), 0.0),
@@ -799,7 +842,15 @@ def _build_game(ctx: Ctx):
                     o.broadcast("music", ctx.b("music"))),
               o.if_(o.eq(V("sel"), 2), o.set_var(V("sfxOn"), o.sub(1, V("sfxOn")))),
               o.if_(o.eq(V("sel"), 3), o.set_var(V("fxOn"), o.sub(1, V("fxOn")))),
-              o.if_(o.eq(V("sel"), 4), goto_screen.call("menu")),
+              o.if_(o.eq(V("sel"), 4),
+                    o.set_var(V("lowLatency"), o.sub(1, V("lowLatency")))),
+              o.if_(o.eq(V("sel"), 5),
+                    o.ifelse(o.eq(V("detail"), 2),
+                             [o.set_var(V("detail"), 0)],
+                             [o.change_var(V("detail"), 1)])),
+              o.if_(o.eq(V("sel"), 6),
+                    o.set_var(V("showFps"), o.sub(1, V("showFps")))),
+              o.if_(o.eq(V("sel"), 7), goto_screen.call("menu")),
               paint.call()),
         o.if_(o.eq(V("actSt"), "pause"),
               o.if_(o.eq(V("sel"), 1),
@@ -847,7 +898,7 @@ def _build_game(ctx: Ctx):
                                   o.join("%   COINS ", V("coinsTotal"))),
                         -110, -130, 100)),
         o.if_(o.eq(V("state"), "select"), *_paint_select(ctx, text_r)),
-        o.if_(o.eq(V("state"), "settings"), *_paint_settings(ctx, text)),
+        o.if_(o.eq(V("state"), "settings"), *_paint_settings(ctx, text_r)),
         o.if_(o.eq(V("state"), "win"), *_paint_win(ctx, text)),
     )
 
@@ -879,6 +930,11 @@ def _build_game(ctx: Ctx):
               o.set_var(V("coinStr"), o.join(o.join("COINS ", V("coins")),
                                              o.join("/", V("coinTotal")))),
               text.call(22 + BAR_LEN, V("coinStr"), -232, -164, 100)),
+        # optional render-fps readout (SHOW FPS setting), top right
+        o.if_(o.allof(o.eq(V("showFps"), 1), o.gt(o.length_of(V("fpsShow")), 0),
+                      o.not_(o.eq(V("fpsShow"), V("fpsStr")))),
+              o.set_var(V("fpsStr"), V("fpsShow")),
+              text_r.call(49, V("fpsStr"), 232, 190, 100)),
     )
 
     set_prog.define(
@@ -934,10 +990,16 @@ def _build_game(ctx: Ctx):
     )
 
     boom.define(
-        o.if_(o.eq(V("fxOn"), 1),
+        # GRAPHICS LOW halves every burst; ULTRA skips particles entirely
+        # (the Particles toggle still overrides both).
+        o.if_(o.allof(o.eq(V("fxOn"), 1), o.lt(V("detail"), 2)),
               o.set_var(V("fxAtX"), boom.arg(0)),
               o.set_var(V("fxAtY"), boom.arg(1)),
-              o.set_var(V("fxN"), boom.arg(2)),
+              o.ifelse(o.eq(V("detail"), 1),
+                       [o.set_var(V("fxN"),
+                                  o.mathop("ceiling",
+                                           o.div(boom.arg(2), 2)))],
+                       [o.set_var(V("fxN"), boom.arg(2))]),
               o.broadcast("boom", ctx.b("boom"))),
     )
 
@@ -1022,13 +1084,19 @@ def _paint_select(ctx, text_r):
             for i in range(3)]
 
 
-def _paint_settings(ctx, text):
+def _paint_settings(ctx, text_r):
     V = ctx.v
     out = []
-    for i, var in enumerate(("musicOn", "sfxOn", "fxOn")):
+    rows = ("musicOn", "sfxOn", "fxOn", "lowLatency", "showFps")
+    for i, var in enumerate(rows):
         out.append(o.ifelse(o.eq(V(var), 1),
-                            [text.call(1 + i * 4, "ON", 112, SETTINGS_VAL_Y[i], 100)],
-                            [text.call(1 + i * 4, "OFF", 108, SETTINGS_VAL_Y[i], 100)]))
+                            [text_r.call(1 + i * 4, "ON", 156,
+                                         SETTINGS_VAL_Y[i], 100)],
+                            [text_r.call(1 + i * 4, "OFF", 156,
+                                         SETTINGS_VAL_Y[i], 100)]))
+    for i, name in ((0, "HIGH"), (1, "LOW"), (2, "ULTRA")):
+        out.append(o.if_(o.eq(V("detail"), i),
+                         text_r.call(21, name, 156, SETTINGS_VAL_Y[5], 100)))
     return out
 
 
@@ -1240,8 +1308,10 @@ def _build_far(ctx: Ctx):
              o.if_(o.eq(s.var("isClone"), 0),
                    o.set_var(s.var("wGen"), V("gen")),
                    o.switch_costume_var(o.join("far", V("level")), s, "far1"),
-                   o.goto_xy(0, 0), o.create_clone("_myself_"),
-                   o.goto_xy(480, 0), o.create_clone("_myself_")),
+                   # GRAPHICS LOW/ULTRA skips the parallax layer entirely
+                   o.if_(o.eq(V("detail"), 0),
+                         o.goto_xy(0, 0), o.create_clone("_myself_"),
+                         o.goto_xy(480, 0), o.create_clone("_myself_"))),
              x=30, y=120,
              comment="Only the original responds; clones must not fan out broadcasts.")
 
@@ -1249,6 +1319,8 @@ def _build_far(ctx: Ctx):
              o.set_var(s.var("isClone"), 1),
              o.show(),
              o.forever(
+                 # GRAPHICS LOW/ULTRA retires the parallax live as well
+                 o.if_(o.gt(V("detail"), 0), o.delete_clone()),
                  o.if_(o.not_(o.eq(s.var("wGen"), V("gen"))), o.delete_clone()),
                  o.change_x(o.mul(-4, V("stepsRun"))),
                  o.if_(o.lt(o.x_position(), -480), o.change_x(960))),
@@ -1356,10 +1428,16 @@ def _build_hud(ctx: Ctx):
 def _build_sel(ctx: Ctx):
     s = Target("Sel", layer_order=8)
     s.add_costume("sel", art.ui_selector(250, 26), "png", 250, 26, 2)
+    # the settings rows carry a value pill out to stage x=162, so that screen
+    # gets a wider highlight; 250 px would stop mid-pill (v0.2.2 fix)
+    s.add_costume("selWide", art.ui_selector(360, 26), "png", 360, 26, 2)
     s.visible = False
     ctx.p.sprites.append(s)
     V = ctx.v
     s.var("rowY", 0)
+    # costume mirror: only switch (and dirty the renderer) when the screen
+    # kind actually changed, instead of every frame
+    s.var("selMode", 0)
 
     on_menu = o.anyof(o.anyof(o.eq(V("state"), "menu"),
                               o.eq(V("state"), "select")),
@@ -1370,7 +1448,15 @@ def _build_sel(ctx: Ctx):
              o.hide(),
              o.forever(
                  o.ifelse(on_menu,
-                          [o.show(), *_sel_y_chain(ctx, s)],
+                          [o.show(),
+                           o.ifelse(o.eq(V("state"), "settings"),
+                                    [o.if_(o.eq(s.var("selMode"), 0),
+                                           o.switch_costume("selWide"),
+                                           o.set_var(s.var("selMode"), 1))],
+                                    [o.if_(o.eq(s.var("selMode"), 1),
+                                           o.switch_costume("sel"),
+                                           o.set_var(s.var("selMode"), 0))]),
+                           *_sel_y_chain(ctx, s)],
                           [o.hide()])),
              x=30, y=30,
              comment="The highlight follows the selected row on every screen.")

@@ -531,12 +531,15 @@ def screen_settings(labels: list[str]) -> bytes:
     img = _screen()
     _center(img, "SETTINGS", 48, 3, _TITLE)
     _rule(img, 76)
+    # 7 evenly spaced rows starting below the rule; the value pill is wide
+    # enough for "ULTRA" and the selector costume (selWide, 360 px) reaches
+    # past its right edge
     for i, label in enumerate(labels):
-        y = 118 + i * 38
+        y = 96 + i * 30
         img.text(label, 96, y - 7, _TITLE, 2, 1, outline=(0, 0, 0))
-        img.rect(330, y - 9, 60, 18, (10, 12, 30, 220))
-        img.frame(330, y - 9, 60, 18, (120, 140, 255, 120), 1)
-    _center(img, "SPACE OR CLICK TO TOGGLE", 300, 2, _DIM, outline=None, shadow=None)
+        img.rect(318, y - 9, 84, 18, (10, 12, 30, 220))
+        img.frame(318, y - 9, 84, 18, (120, 140, 255, 120), 1)
+    _center(img, "SPACE OR CLICK TO TOGGLE", 316, 2, _DIM, outline=None, shadow=None)
     return img.to_png()
 
 

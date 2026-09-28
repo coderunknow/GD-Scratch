@@ -8,6 +8,18 @@ synthesised music and SFX — all of it in a single `.sb3` that loads in Scratch
 3.32.1, on scratch.mit.edu, and in TurboWarp. No extensions, no hacks, no
 custom runtime: `project.json` declares `"extensions": []`.
 
+**v0.2.2** fixes unfair block-edge deaths (corner clips up to 9 px now land
+instead of killing — both the game and the physics reference), makes the
+settings highlight cover the whole row including the ON/OFF pill, and adds
+real in-game settings: **LOW LATENCY** input (CBF-style tap sampling),
+**GRAPHICS** HIGH/LOW/ULTRA (LOW/ULTRA retire the parallax layer and cut or
+disable particles — the practical lever for weak devices), and a **SHOW FPS**
+overlay. TurboWarp's own CBF/fps knobs live in the player and cannot be
+changed from a project; these rows are the in-game equivalents. Per-frame
+interpreter work is 4–13% above v0.2.1 (the cost of the new features) and
+still 30–39% below v0.2.0. See the
+[release verification report](docs/v0.2.2.md).
+
 **v0.2.1** makes the game frame-rate-independent and cheaper to run. The
 simulation is now a fixed 30 Hz clock driven by the `timer` with an
 accumulator and a catch-up cap (see below), so the game plays identically at
@@ -74,6 +86,24 @@ Consequences:
 | `R` | restart the level |
 | `Q` | quit to the title screen |
 | `M` | music on / off |
+
+## Settings
+
+SETTINGS on the title screen has seven rows, toggled with space / enter /
+click:
+
+| row | what it does |
+| --- | --- |
+| MUSIC / SOUND EFFECTS / PARTICLES | audio and particle toggles |
+| LOW LATENCY | ON (default): taps are registered every rendered frame and consumed by exactly one physics step, so nothing is lost at high frame rates. OFF: inputs are sampled at 30 Hz only, classic style. |
+| GRAPHICS | HIGH (default) / LOW / ULTRA. LOW hides the far parallax layer and halves every particle burst; ULTRA also turns particles off. This is the lever to pull on weak devices — the savings are mostly in the renderer. |
+| SHOW FPS | draws a live render-fps counter at the top right while playing (display only — a project cannot set the host's frame rate). |
+
+Settings last until the green flag is pressed again.
+
+Block platforms are forgiving at the corners: a landing that clips a block's
+edge by up to a third of a cell snaps on top instead of killing you. Square
+wall hits and hits from below are still fatal, as in the game this imitates.
 
 ## The levels
 

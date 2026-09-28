@@ -72,6 +72,10 @@ const ORB_VY = [19.4, 15.6, 11.8, 8, 25, 21.2, 17.4, 13.6, 9.8, 6,
 async function runSchedule (vm, name, holds, extra) {
     const rt = vm.runtime;
     const gv = n => vars(vm)[n];
+    // a previous schedule can end mid-press; release everything first
+    press(vm, 'space', false);
+    press(vm, 'up arrow', false);
+    press(vm, 'down arrow', false);
     vm.greenFlag();
     for (let i = 0; i < 4; i += 1) rt._step();
     // activate level 1 the way replay.js does: press, one frame, release,
@@ -166,6 +170,35 @@ async function main () {
         orb.trace[474] ? orb.trace[474].vy : 'n/a', 25);
     check('run still wins on step 659',
         `${orb.endState}@${orb.endFrame}`, 'win@659');
+
+    console.log('block corner forgiveness (v0.2.2 rule, both sides)');
+    // fixture holds + one extra tap on step 271: the cube falls onto a block
+    // corner with its bottom 2.4 px below the surface at step 282. The old
+    // rule killed there (pre-fix dist: die@283); the reference now snaps it
+    // onto the surface and the run still wins on step 659.
+    const cornerHolds = base.slice();
+    cornerHolds[271 - 1] = 1;
+    const corner = await runSchedule(vm, 'corner', cornerHolds, {271: 1});
+    {
+        const rows = [];
+        for (let f = 278; f <= 292; f += 1) rows.push(corner.trace[f]);
+        const want = [
+            [-25.8, -3.4], [-33, -7.2], [-44, -11], [-58.8, -14.8],
+            [-77.4, -18.6], [-75, 0], [-75, 0], [-75, 0], [-75, 0],
+            [-75, 0], [-75, 0], [-75, 0], [-75, 0], [-75, 0], [-78.8, -3.8]];
+        let bad = 0;
+        rows.forEach((r, i) => {
+            if (!r || Math.abs(r.y - want[i][0]) > 1e-9 ||
+                Math.abs(r.vy - want[i][1]) > 1e-9) bad += 1;
+        });
+        check('corner clip matches the Python reference, steps 278-292',
+            bad, 0);
+        check('the corner clip lands instead of killing (grounded at 283)',
+            corner.trace[283] ? corner.trace[283].y : 'no trace (dead)',
+            -75);
+        check('the forgiven run still wins on step 659',
+            `${corner.endState}@${corner.endFrame}`, 'win@659');
+    }
 
     if (problems.length) {
         failures += 1;

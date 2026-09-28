@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from .levels import (
     CELL,
+    CORNER_FORGIVE,
     CEIL_Y,
     GRAVITY,
     GY,
@@ -148,7 +149,10 @@ def step(level: Level, st: State, hold: int):
                     continue
                 if grav == 1:
                     surface = y1
-                    if prev_y - HALF >= surface - 1e-6 and vy <= 0:
+                    # corner forgiveness: the bottom may sit up to
+                    # CORNER_FORGIVE px past the surface when the overlap
+                    # starts; the cube then snaps on top instead of dying
+                    if prev_y - HALF >= surface - CORNER_FORGIVE and vy <= 0:
                         y = surface + HALF
                         vy = 0.0
                         grounded = 1
@@ -156,7 +160,7 @@ def step(level: Level, st: State, hold: int):
                         died = True
                 else:
                     surface = y0
-                    if prev_y + HALF <= surface + 1e-6 and vy >= 0:
+                    if prev_y + HALF <= surface + CORNER_FORGIVE and vy >= 0:
                         y = surface - HALF
                         vy = 0.0
                         grounded = 1

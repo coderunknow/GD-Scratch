@@ -60,6 +60,7 @@ sys.exit(1 if d.get('failed') else 0)"
     (cd tests/headless && node text.js "../../$FILE" --fps 60) | tail -1
     (cd tests/headless && node physics.js "../../$FILE") | tail -1
     (cd tests/headless && node physics.js "../../$FILE" --fps 60) | tail -1
+    (cd tests/headless && node fuzz.js "../../$FILE") | tail -2
     (cd tests/headless && node lifecycle.js "../../$FILE") |
         grep -E '^PASS:|^FAIL:'
     (cd tests/headless && node lifecycle.js "../../$FILE" --fps 60) |

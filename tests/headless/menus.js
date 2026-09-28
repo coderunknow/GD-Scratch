@@ -163,6 +163,13 @@ async function main () {
     check('SETTINGS opens', vars(vm).state, 'settings');
     check('music starts on', vars(vm).musicOn, 1);
     check('sfx starts on', vars(vm).sfxOn, 1);
+    const selTarget = rt.targets.find(t => t.sprite.name === 'Sel');
+    // the settings value pill reaches to stage x=162; only the wide highlight
+    // costume covers it (v0.2.2 fix). currentCostume is 0-based.
+    check('the highlight switches to the wide costume',
+        selTarget.currentCostume, 1);
+    for (let i = 0; i < 7; i += 1) tap('down arrow');   // full cycle -> row 1
+    check('seven rows: DOWN wraps past BACK to MUSIC', vars(vm).sel, 1);
     tap('space');
     check('row 1 toggles music off', vars(vm).musicOn, 0);
     tap('space');
@@ -171,10 +178,30 @@ async function main () {
     check('row 2 toggles sfx off', vars(vm).sfxOn, 0);
     tap('space');
     check('row 2 toggles sfx back on', vars(vm).sfxOn, 1);
-    tap('down arrow'); tap('down arrow');
-    check('row 4 is BACK', vars(vm).sel, 4);
+    tap('down arrow'); tap('space');
+    check('row 3 toggles particles off', vars(vm).fxOn, 0);
+    tap('space');
+    check('row 3 toggles particles back on', vars(vm).fxOn, 1);
+    tap('down arrow'); tap('space');
+    check('row 4 toggles low latency off', vars(vm).lowLatency, 0);
+    tap('space');
+    check('row 4 toggles low latency back on', vars(vm).lowLatency, 1);
+    tap('down arrow'); tap('space');
+    check('row 5 cycles graphics HIGH -> LOW', vars(vm).detail, 1);
+    tap('space');
+    check('then LOW -> ULTRA', vars(vm).detail, 2);
+    tap('space');
+    check('then ULTRA -> HIGH', vars(vm).detail, 0);
+    tap('down arrow'); tap('space');
+    check('row 6 toggles the fps overlay on', vars(vm).showFps, 1);
+    tap('space');
+    check('and back off', vars(vm).showFps, 0);
+    tap('down arrow');
+    check('row 7 is BACK', vars(vm).sel, 7);
     tap('space');
     check('BACK returns to the title screen', vars(vm).state, 'menu');
+    check('the highlight is narrow again off settings',
+        selTarget.currentCostume, 0);
     tap('m');
     check('M toggles music anywhere', vars(vm).musicOn, 0);
     tap('m');
@@ -280,6 +307,136 @@ async function main () {
     check(`restarting the level restarts the music ` +
           `(${restartsBefore} -> ${musicRestarts})`,
           musicRestarts > restartsBefore, true);
+
+    // --- helpers for navigating settings from inside a run ---------------
+    // note: scratch-vm has no isClone property here; isOriginal is the flag
+    const clonesOf = name =>
+        rt.targets.filter(t => t.sprite.name === name && !t.isOriginal).length;
+    const menuRow = row => {            // title only: land on menu row
+        const downs = (row - Number(vars(vm).sel) + 4) % 4;
+        for (let i = 0; i < downs; i += 1) tap('down arrow');
+    };
+    const quitToTitle = () => {         // play -> pause -> QUIT
+        tap('p');
+        tap('down arrow'); tap('down arrow');               // row 3 QUIT
+        tap('space');
+        check('Q via pause menu returns to the title', vars(vm).state, 'menu');
+    };
+    const setSetting = (row, presses) => {   // title -> settings row -> title
+        menuRow(4);
+        tap('space');                        // open SETTINGS
+        check(`SETTINGS opened for row ${row}`, vars(vm).state, 'settings');
+        const downs = (row - Number(vars(vm).sel) + 7) % 7;
+        for (let i = 0; i < downs; i += 1) tap('down arrow');
+        for (let i = 0; i < presses; i += 1) tap('space');
+        for (let i = 0; i < (7 - row) % 7; i += 1) tap('down arrow');
+        tap('space');                        // BACK
+        check(`settings row ${row} set, back at the title`,
+            vars(vm).state, 'menu');
+    };
+    const freshRun = () => {            // title -> level 1, grounded
+        menuRow(1);
+        tap('space');
+        check('level 1 running (fresh run)', vars(vm).state, 'play');
+        step(3);
+    };
+
+    console.log('graphics settings apply to the live level');
+    quitToTitle();
+    setSetting(5, 1);                   // GRAPHICS HIGH -> LOW
+    freshRun();
+    step(8);
+    check('GRAPHICS LOW retires the parallax clones', clonesOf('Far'), 0);
+    quitToTitle();
+    setSetting(5, 2);                   // LOW -> HIGH (two presses)
+    freshRun();
+    step(8);
+    check('GRAPHICS HIGH keeps both parallax clones', clonesOf('Far'), 2);
+    quitToTitle();
+    setSetting(5, 2);                   // HIGH -> ULTRA (two presses)
+    freshRun();
+    for (let i = 0; i < 120 && vars(vm).state === 'play'; i += 1) step();
+    step(2);
+    check('the cube died (ULTRA particle setup)', vars(vm).state, 'dead');
+    check('ULTRA draws no particles at all', clonesOf('FX'), 0);
+    tap('r');                           // leave the death screen first
+    step(2);
+    quitToTitle();
+    setSetting(5, 1);                   // ULTRA -> HIGH
+    freshRun();
+    for (let i = 0; i < 120 && vars(vm).state === 'play'; i += 1) step();
+    step(2);
+    check('the cube died (HIGH particle setup)', vars(vm).state, 'dead');
+    check('HIGH draws the full burst', clonesOf('FX') > 0, true);
+    tap('r');                           // leave the death screen
+    step(2);
+
+    console.log('the fps overlay');
+    quitToTitle();
+    setSetting(6, 1);                   // SHOW FPS on
+    freshRun();
+    step(20);                           // > the 0.5 s meter window
+    const txtch = stageList('TXTCH');
+    const overlay = txtch.slice(48, 54).join('').trim();
+    check(`the overlay reads "${overlay}"`,
+          overlay.startsWith('FPS '), true);
+    quitToTitle();
+
+    console.log('low latency input semantics');
+    setSetting(4, 1);                   // LOW LATENCY off
+    freshRun();
+    {
+        // find a render frame that runs no physics step (only exists above
+        // 30 fps); the frame after it steps, so idle frames recur every
+        // second frame from there on
+        let idleFound = false;
+        for (let g = 0; g < 6 && !idleFound; g += 1) {
+            const f = Number(vars(vm).frame);
+            step();
+            idleFound = Number(vars(vm).frame) === f;
+        }
+        const py0 = Number(vars(vm).py);
+        if (idleFound) {
+            step();                     // burn the stepping frame; next idles
+            press(vm, 'space', true); step(); press(vm, 'space', false);
+            step(2);
+            check('LOW LATENCY off drops a tap made between steps',
+                Number(vars(vm).py) === py0 &&
+                Number(vars(vm).grounded) === 1, true);
+        } else {
+            // 30 fps: every frame steps; a spanning tap must still jump
+            tap('space'); step(2);
+            check('LOW LATENCY off keeps 30 Hz sampling semantics',
+                Number(vars(vm).py) > py0, true);
+        }
+    }
+    quitToTitle();
+    setSetting(4, 1);                   // toggle back on
+    freshRun();
+    {
+        let idleFound = false;
+        for (let g = 0; g < 6 && !idleFound; g += 1) {
+            const f = Number(vars(vm).frame);
+            step();
+            idleFound = Number(vars(vm).frame) === f;
+        }
+        const py0 = Number(vars(vm).py);
+        if (idleFound) {
+            step();                     // burn the stepping frame; next idles
+            press(vm, 'space', true); step(); press(vm, 'space', false);
+            let jumped = false;
+            for (let i = 0; i < 3; i += 1) {
+                step();
+                if (Number(vars(vm).py) > py0) { jumped = true; break; }
+            }
+            check('LOW LATENCY on consumes the same tap exactly once',
+                jumped, true);
+        } else {
+            tap('space'); step(2);
+            check('LOW LATENCY on jumps (30 fps)',
+                Number(vars(vm).py) > py0, true);
+        }
+    }
 
     console.log('Q mid-level');
     step(5);

@@ -2,7 +2,7 @@
  * Glyph/text-pool consistency test.
  *
  * The text pool draws the dynamic strings (progress bar, percentage, attempt,
- * coins, menu values) through 48 glyph clones. Each clone watches its slot's
+ * coins, menu values) through the glyph-clone pool. Each clone watches its slot's
  * revision (TXTREV) and only reapplies costume/position/size when that slot
  * was rewritten. That is a performance guard, and its failure mode is a stale
  * glyph: a clone still showing an old character, old position or old size

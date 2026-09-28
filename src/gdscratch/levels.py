@@ -43,6 +43,9 @@ ROT_PER_FRAME = 26.0   # cube spin while airborne, degrees per frame
 
 SPIKE_INSET_X = 8.0    # spike hitbox is narrower than its art, like real GD
 SPIKE_H = 20.0         # spike hitbox height measured from its base
+CORNER_FORGIVE = 9.0   # block-corner forgiveness: a fall that starts at most
+                       # this many px past a block's surface still snaps on
+                       # top instead of killing (owner-directed, v0.2.2)
 
 
 @dataclass
