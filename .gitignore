@@ -1,0 +1,11 @@
+# Node dependencies for the headless scratch-vm test rig. They are ~90 MB of
+# scratch-* packages; `npm ci` in tests/headless restores them exactly.
+node_modules/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Scratch editor / OS noise
+.DS_Store
+*.sb3.bak
