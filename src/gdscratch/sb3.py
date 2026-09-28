@@ -515,11 +515,20 @@ class Project:
     def save_sb3(self, path: str) -> None:
         payload = self.project_json_bytes()
         assets = self.assets()
+        # Pin every zip timestamp: writestr defaults to "now", which would
+        # make rebuilds of identical sources differ byte-for-byte. All
+        # entries get the same fixed stamp, so two builds of one source
+        # tree are bit-identical.
+        stamp = zipfile.ZipInfo("sb3", date_time=(2026, 1, 1, 0, 0, 0))
+        stamp.compress_type = zipfile.ZIP_DEFLATED
         with open(path, "wb") as fh:
             with zipfile.ZipFile(fh, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("project.json", payload)
-                for name in sorted(assets):
-                    zf.writestr(name, assets[name])
+                entries = ([("project.json", payload)] +
+                           [(k, assets[k]) for k in sorted(assets)])
+                for name, data in entries:
+                    info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    zf.writestr(info, data)
 
     def save_project_json(self, path: str) -> None:
         with open(path, "wb") as fh:

@@ -8,9 +8,20 @@ synthesised music and SFX — all of it in a single `.sb3` that loads in Scratch
 3.32.1, on scratch.mit.edu, and in TurboWarp. No extensions, no hacks, no
 custom runtime: `project.json` declares `"extensions": []`.
 
-**v0.2.0** prioritizes clone lifecycle stability and runtime reliability. The
-release fixes a verified exponential clone-fanout bug on restart/effects, retires
-level clones on exit, adds the missing grounded-jump sound feedback, and makes
+**v0.2.1** makes the game frame-rate-independent and cheaper to run. The
+simulation is now a fixed 30 Hz clock driven by the `timer` with an
+accumulator and a catch-up cap (see below), so the game plays identically at
+30 fps, at 60 fps under TurboWarp, or at any other render cadence; a
+render-cadence input latch keeps taps exact at high frame rates; and per-frame
+primitive work dropped 36–46% across all benchmark scenarios with identical
+inputs. It also fixes a pause/resume input leak found by audit. Gameplay,
+levels, physics and feel are unchanged — all three solver solutions still
+replay frame-exactly. See the
+[release verification report](docs/v0.2.1.md).
+
+**v0.2.0** prioritized clone lifecycle stability and runtime reliability. That
+release fixed a verified exponential clone-fanout bug on restart/effects, retired
+level clones on exit, added the missing grounded-jump sound feedback, and made
 noise-based sound asset generation deterministic. See the
 [release verification report](docs/v0.2.0.md).
 
@@ -27,8 +38,30 @@ noise-based sound asset generation deterministic. See the
 **scratch.mit.edu** — sign in, `File → Create → File → Load from your computer`.
 
 **TurboWarp** — drag `dist/GD-Scratch-TurboWarp.sb3` onto
-[turbowarp.org](https://turbowarp.org). Tick "Turbo mode" off if you want the
-vanilla 30 fps feel; the game is paced to run at the same speed either way.
+[turbowarp.org](https://turbowarp.org). The TurboWarp file asks for 60 fps
+rendering with interpolation; "Turbo mode" on or off, the game runs at the
+same speed — only rendering smoothness changes (see below).
+
+## Frame rate & pacing
+
+The visible game runs off a **fixed 30 Hz simulation clock**, not off the
+render loop. Every rendered frame the project reads the Scratch `timer`,
+accumulates the elapsed simulation time, and runs however many 30 Hz physics
+steps are due (0–2 at a smooth 30 fps, exactly 2 per frame at a locked 60 fps).
+Consequences:
+
+- **Render-rate independence.** 30 fps and 60 fps (and anything else) play
+  identically: same scroll speed, same jump arcs, same countdowns, same music
+  timing. Only smoothness differs. All three levels' solver solutions are
+  frame-exact at both 30 and 60 fps in the automated tests.
+- **Catch-up cap.** At most 3 physics steps run per rendered frame and any
+  larger backlog is dropped. A stalled tab or a device slower than ~10 fps
+  effective slows the game down uniformly instead of teleporting the cube
+  after the stall.
+- **Input latch.** Taps are registered when a render frame sees them and
+  consumed by exactly one physics step, so a tap shorter than a frame at
+  60 fps is never lost and never double-counted. Holding jump to bounce on
+  landing works exactly as always.
 
 ## Controls
 
