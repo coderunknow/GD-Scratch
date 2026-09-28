@@ -7,10 +7,15 @@ covers world x ``[col*CELL, col*CELL+CELL)`` and world y
 ``[GY + row*CELL, GY + (row+1)*CELL)``. The camera is fixed and the world
 scrolls: something at world x ``wx`` is drawn at ``wx - worldX``.
 
-``step play`` below is a line-by-line transcription of ``gdscratch.verify.step``.
-``tests/headless/replay.js`` drives the generated project inside scratch-vm with
-a solved input schedule and compares every frame's ``py`` against the Python
-model, so the two cannot silently drift apart.
+``step play`` below is a line-by-line transcription of ``gdscratch.verify.step``
+(one 30 Hz physics step). The master clock no longer runs one physics step per
+rendered frame: each frame it computes how many whole 30 Hz ticks elapsed on
+the Scratch timer and runs that many steps (capped, excess time dropped), so
+the simulation runs at the same speed under Scratch's 30 fps and TurboWarp's
+60 fps. ``tests/headless/replay.js`` drives the generated project inside
+scratch-vm with a solved input schedule under deterministic 30 fps and 60 fps
+clocks and compares every physics step against the Python model, so the two
+cannot silently drift apart.
 
 Only stock Scratch 3 blocks are used, so the project loads unchanged in
 scratch.mit.edu and in the Scratch 3.32.1 app.
@@ -45,6 +50,12 @@ EPS = 0.000001          # landing tolerance, same as verify.step
 PORTAL_TRIGGER = 6.0    # px into a portal column before it fires
 PAD_TRIGGER = 14.0      # how close to a pad counts as touching it
 OOB = 210.0             # this far out of the world is death
+
+# simulation pacing: at most this many 30 Hz physics steps run per rendered
+# frame. 60 fps rendering needs at most 1; 2-3 absorb jitter. Simulation time
+# beyond the cap is dropped (never fast-forwarded), so a stalled tab catches
+# up by at most SIM_CAP steps and then resumes in real time.
+SIM_CAP = 3
 
 # --- presentation layout ----------------------------------------------------
 TEXT_SLOTS = 48         # glyph clones; only values that change use them
@@ -163,12 +174,27 @@ def _declare(ctx: Ctx):
     V("grounded", 1)
     V("grav", 1.0)
     V("held", 0)
-    V("heldPrev", 0)
     V("jumpEdge", 0)
     V("died", 0)
     V("won", 0)
     V("prevY", 0.0)
     V("rot", 0.0)
+
+    # fixed-30 Hz simulation pacing. The master tick derives `now30`, the
+    # whole number of 30 Hz ticks since the green flag, from the deterministic
+    # Scratch timer; `due` physics steps run this rendered frame (capped), and
+    # `stepsRun` tells the scenery clones how far to scroll.
+    V("now30", 0)
+    V("lastTick", 0)
+    V("due", 0)
+    V("stepsRun", 0)
+
+    # render-rate input capture: `raw` is the jump key/mouse sampled once per
+    # rendered frame, `tapLatch` holds presses that happened entirely between
+    # two physics steps until a step consumes them.
+    V("raw", 0)
+    V("rawPrev", 0)
+    V("tapLatch", 0)
 
     # collision scan scratch space
     V("c0", 0)
@@ -182,6 +208,13 @@ def _declare(ctx: Ctx):
     V("x1", 0.0)
     V("y0", 0.0)
     V("y1", 0.0)
+    V("rowCursor", 0)
+    V("rowStride", 0)
+    V("pxEdge", 0.0)
+    V("colX", 0.0)
+    V("portalX", 0.0)
+    V("portalOK", 0)
+    V("finOK", 0)
     V("launchV", 0.0)
     V("hasLaunch", 0)
     V("portalTo", 0.0)
@@ -214,6 +247,7 @@ def _declare(ctx: Ctx):
     V("sel", 1)
     V("selCount", 4)
     V("screenFrom", "")
+    V("track", "music0")
     V("deadT", 0)
     V("winT", 0)
     V("shakeT", 0)
@@ -234,6 +268,14 @@ def _declare(ctx: Ctx):
     V("tLen", 0)
     V("tSize", 100)
     V("barStr", "")
+    # per-slot text revision: bumped on every put text/clear text so glyph
+    # clones can go idle when nothing they draw has changed
+    V("tRev", 0)
+    # last strings painted at the fixed HUD slots; put text is skipped while
+    # the value has not changed
+    V("progStr", "")
+    V("attStr", "")
+    V("coinStr", "")
     V("fxAtX", 0.0)
     V("fxAtY", 0.0)
     V("fxN", 0)
@@ -242,6 +284,7 @@ def _declare(ctx: Ctx):
     ctx.l("TXTX", [0] * TEXT_SLOTS)
     ctx.l("TXTY", [0] * TEXT_SLOTS)
     ctx.l("TXTS", [100] * TEXT_SLOTS)
+    ctx.l("TXTREV", [-1] * TEXT_SLOTS)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +321,7 @@ def _build_game(ctx: Ctx):
     start_level = o.Proc(g, "start level", [("n", "s")])
     load_data = o.Proc(g, "load data", [("n", "s")])
     read_input = o.Proc(g, "read input")
+    begin_step_input = o.Proc(g, "begin step input")
     tick = o.Proc(g, "tick")
     step_play = o.Proc(g, "step play")
     scan_portals = o.Proc(g, "scan portals")
@@ -310,6 +354,13 @@ def _build_game(ctx: Ctx):
         o.set_var(V("sfxOn"), 1),
         o.set_var(V("fxOn"), 1),
         o.set_var(V("coinsTotal"), 0),
+        # the simulation clock and the input latch start clean on every flag
+        o.set_var(V("lastTick"), 0),
+        o.set_var(V("due"), 0),
+        o.set_var(V("stepsRun"), 0),
+        o.set_var(V("raw"), 0),
+        o.set_var(V("rawPrev"), 0),
+        o.set_var(V("tapLatch"), 0),
         o.list_delete_all(ctx.l("GOT")),
         o.replace_item(1, 0, ctx.l("BESTS")),
         o.replace_item(2, 0, ctx.l("BESTS")),
@@ -339,8 +390,12 @@ def _build_game(ctx: Ctx):
         o.set_var(V("grounded"), 1),
         o.set_var(V("grav"), 1.0),
         o.set_var(V("held"), 0),
-        o.set_var(V("heldPrev"), 0),
         o.set_var(V("jumpEdge"), 0),
+        # no press made before/while opening the level may leak into play: a
+        # tap latched for the menus must not jump the cube on step one
+        o.set_var(V("raw"), 0),
+        o.set_var(V("rawPrev"), 0),
+        o.set_var(V("tapLatch"), 0),
         o.set_var(V("died"), 0),
         o.set_var(V("won"), 0),
         o.set_var(V("coins"), 0),
@@ -353,6 +408,7 @@ def _build_game(ctx: Ctx):
         o.set_var(V("filled"), -1),
         o.set_var(V("spawnCol"), 0),
         o.set_var(V("state"), "play"),
+        o.set_var(V("track"), o.join("music", n)),
         o.switch_backdrop_var(o.join("bg", n), "bg1"),
         o.broadcast("level start", ctx.b("level start")),
         o.broadcast("music", ctx.b("music")),
@@ -383,14 +439,29 @@ def _build_game(ctx: Ctx):
     )
 
     # ---------------- input ----------------
+    # Render-rate capture only. The jump input is *sampled* here, once per
+    # rendered frame; presses that begin and end between two physics steps are
+    # latched in `tapLatch` so no transient tap can be lost at high render
+    # rates. Gameplay semantics are applied per physics step by
+    # `begin step input`, which each due step calls exactly once.
     read_input.define(
-        either(V("held"),
+        either(V("raw"),
                o.anyof(o.anyof(o.key_pressed("space"), o.key_pressed("up arrow")),
                        o.mouse_down()),
                1, 0),
-        either(V("jumpEdge"),
-               o.allof(o.eq(V("held"), 1), o.eq(V("heldPrev"), 0)), 1, 0),
-        o.set_var(V("heldPrev"), V("held")),
+        o.if_(o.allof(o.eq(V("raw"), 1), o.eq(V("rawPrev"), 0)),
+              o.set_var(V("tapLatch"), 1)),
+        o.set_var(V("rawPrev"), V("raw")),
+    )
+
+    # Per-physics-step input consumption: the step sees the key as held if it
+    # is down now *or* a tap was latched since the previous step; the edge
+    # (needed by orbs) is exactly the latch. Consuming clears it, so a single
+    # tap can never drive two steps.
+    begin_step_input.define(
+        either(V("held"), o.gt(o.add(V("raw"), V("tapLatch")), 0), 1, 0),
+        either(V("jumpEdge"), o.eq(V("tapLatch"), 1), 1, 0),
+        o.set_var(V("tapLatch"), 0),
     )
 
     # ---------------- master tick ----------------
@@ -410,22 +481,50 @@ def _build_game(ctx: Ctx):
         either(V("kAct"), o.anyof(o.key_pressed("space"), o.key_pressed("enter")),
                1, 0),
         read_input.call(),
-        o.if_(o.eq(V("st"), "play"), step_play.call()),
-        o.if_(o.eq(V("st"), "dead"),
-              o.change_var(V("deadT"), -1),
-              o.if_(o.lt(V("deadT"), 1), start_level.call(V("level")))),
-        o.if_(o.eq(V("st"), "win"), o.change_var(V("winT"), -1)),
-        # the win screen ignores input for winT frames so the player cannot
+
+        # ---- fixed 30 Hz simulation pacing ----
+        # now30 = whole 30 Hz ticks since the green flag, from the Scratch
+        # timer (floor of timer*30; the timer is a deterministic test clock in
+        # the headless rig and the real runtime clock in a player). `due` is
+        # how many of those ticks have not been simulated yet. The clock keeps
+        # running in menus and during pauses, so no debt piles up while the
+        # simulation is not stepping. Anything more than SIM_CAP ticks behind
+        # is dropped, never fast-forwarded.
+        o.set_var(V("now30"), o.floor_(o.mul(o.timer(), 30))),
+        o.set_var(V("due"), o.sub(V("now30"), V("lastTick"))),
+        o.set_var(V("lastTick"), V("now30")),
+        o.if_(o.gt(V("due"), SIM_CAP), o.set_var(V("due"), SIM_CAP)),
+        o.set_var(V("stepsRun"), 0),
+        # due is already capped at SIM_CAP, so this loop is bounded
+        o.repeat(V("due"),
+                 o.change_var(V("stepsRun"), 1),
+                 # fresh snapshot per step: a step that dies or wins must not
+                 # let the *next* due step run against a stale screen
+                 o.set_var(V("st"), V("state")),
+                 o.if_(o.eq(V("st"), "play"),
+                       begin_step_input.call(),
+                       step_play.call()),
+                 o.if_(o.eq(V("st"), "dead"),
+                       o.change_var(V("deadT"), -1),
+                       o.if_(o.lt(V("deadT"), 1), start_level.call(V("level")))),
+                 o.if_(o.eq(V("st"), "win"), o.change_var(V("winT"), -1)),
+                 # screen shake is a timed effect: it decays in physics steps
+                 # so it lasts the same wall time at any render rate
+                 o.if_(o.gt(V("shakeT"), 0),
+                       o.set_var(V("shakeX"), o.rand(-4, 4)),
+                       o.set_var(V("shakeY"), o.rand(-3, 3)),
+                       o.change_var(V("shakeT"), -1))),
+
+        # the win screen ignores input for winT steps so the player cannot
         # instantly skip past it
         o.if_(o.anyof(in_menu,
                       o.allof(o.eq(V("st"), "win"), o.lt(V("winT"), 1))),
               menu_tick.call()),
-        o.set_var(V("shakeX"), 0),
-        o.set_var(V("shakeY"), 0),
-        o.if_(o.gt(V("shakeT"), 0),
-              o.set_var(V("shakeX"), o.rand(-4, 4)),
-              o.set_var(V("shakeY"), o.rand(-3, 3)),
-              o.change_var(V("shakeT"), -1)),
+        # clear the shake offsets only once the shake is over; on rendered
+        # frames that run no physics step the last offsets must persist
+        o.if_(o.lt(V("shakeT"), 1),
+              o.set_var(V("shakeX"), 0),
+              o.set_var(V("shakeY"), 0)),
         o.set_var(V("mPrev"), V("mDown")),
         either(V("kUpPrev"), o.key_pressed("up arrow"), 1, 0),
         either(V("kDownPrev"), o.key_pressed("down arrow"), 1, 0),
@@ -506,38 +605,57 @@ def _build_game(ctx: Ctx):
         comment="Literal transcription of verify.step(); do not reorder.",
     )
 
+    # Portals are full-height gates and the finish line is a full-height
+    # column: their trigger conditions do not depend on the row, so those
+    # comparisons are hoisted per column. The LVL string is row-major, so the
+    # per-row letter index just advances by W+1 instead of being recomputed.
+    # The visit order (columns left to right, rows top to bottom) and every
+    # condition are exactly verify.step's.
     scan_portals.define(
+        o.set_var(V("rowStride"), o.add(V("W"), 1)),
+        o.set_var(V("pxEdge"), o.add(V("px"), HALF)),
         o.set_var(V("cc"), V("c0")),
         o.repeat(o.add(o.sub(V("c1"), V("c0")), 1),
+                 o.set_var(V("colX"), o.mul(V("cc"), CELL)),
+                 o.set_var(V("portalX"), o.add(V("colX"), PORTAL_TRIGGER)),
+                 either(V("portalOK"), o.gt(V("pxEdge"), V("portalX")), 1, 0),
+                 either(V("finOK"), ge(V("px"), V("colX")), 1, 0),
+                 o.set_var(V("rowCursor"), o.add(V("cc"), 1)),
                  o.set_var(V("rr"), 0),
                  o.repeat(ROWS,
-                          o.set_var(V("ch"), _cellchar(ctx)),
+                          o.set_var(V("ch"), o.letter_of(V("rowCursor"), V("LVL"))),
                           o.if_(o.allof(o.anyof(o.eq(V("ch"), "G"),
                                                 o.eq(V("ch"), "N")),
-                                        o.gt(o.add(V("px"), HALF),
-                                             o.add(o.mul(V("cc"), CELL),
-                                                   PORTAL_TRIGGER))),
+                                        o.eq(V("portalOK"), 1)),
                                 o.set_var(V("hasPortal"), 1),
                                 either(V("portalTo"), o.eq(V("ch"), "G"), -1.0, 1.0)),
-                          o.if_(o.allof(o.eq(V("ch"), "F"),
-                                        ge(V("px"), o.mul(V("cc"), CELL))),
+                          o.if_(o.allof(o.eq(V("ch"), "F"), o.eq(V("finOK"), 1)),
                                 o.set_var(V("won"), 1)),
+                          o.change_var(V("rowCursor"), V("rowStride")),
                           o.change_var(V("rr"), 1)),
                  o.change_var(V("cc"), 1)),
     )
 
+    # Tiles: same visit order and conditions as verify.step. x0/x1 depend only
+    # on the column, the letter index advances by W+1 per row, and y0/y1
+    # advance by one cell height per row, so nothing is recomputed per cell.
     scan_tiles.define(
+        o.set_var(V("rowStride"), o.add(V("W"), 1)),
         o.set_var(V("cc"), V("c0")),
         o.repeat(o.add(o.sub(V("c1"), V("c0")), 1),
+                 o.set_var(V("x0"), o.mul(V("cc"), CELL)),
+                 o.set_var(V("x1"), o.add(V("x0"), CELL)),
+                 o.set_var(V("rowCursor"),
+                           o.add(o.add(o.mul(V("rowStride"), V("r0")),
+                                       V("cc")), 1)),
+                 o.set_var(V("y0"), o.add(GY, o.mul(V("r0"), CELL))),
                  o.set_var(V("rr"), V("r0")),
                  o.repeat(o.add(o.sub(V("r1"), V("r0")), 1),
-                          o.set_var(V("ch"), _cellchar(ctx)),
-                          o.set_var(V("x0"), o.mul(V("cc"), CELL)),
-                          o.set_var(V("x1"), o.add(o.mul(V("cc"), CELL), CELL)),
-                          o.set_var(V("y0"), o.add(GY, o.mul(V("rr"), CELL))),
-                          o.set_var(V("y1"),
-                                    o.add(o.add(GY, o.mul(V("rr"), CELL)), CELL)),
+                          o.set_var(V("ch"), o.letter_of(V("rowCursor"), V("LVL"))),
+                          o.set_var(V("y1"), o.add(V("y0"), CELL)),
                           handle_cell.call(),
+                          o.change_var(V("rowCursor"), V("rowStride")),
+                          o.change_var(V("y0"), CELL),
                           o.change_var(V("rr"), 1)),
                  o.change_var(V("cc"), 1)),
     )
@@ -624,6 +742,7 @@ def _build_game(ctx: Ctx):
         o.set_var(V("winT"), 26),
         o.set_var(V("sel"), 1),
         o.set_var(V("selCount"), 3),
+        o.set_var(V("track"), "music0"),
         record_best.call(),
         o.switch_backdrop("win"),
         o.broadcast("sfx win", ctx.b("sfx win")),
@@ -685,6 +804,7 @@ def _build_game(ctx: Ctx):
         o.if_(o.eq(V("actSt"), "pause"),
               o.if_(o.eq(V("sel"), 1),
                     o.set_var(V("state"), "play"),
+                    o.set_var(V("track"), o.join("music", V("level"))),
                     o.switch_backdrop_var(o.join("bg", V("level")), "bg1")),
               o.if_(o.eq(V("sel"), 2), start_level.call(V("level"))),
               o.if_(o.eq(V("sel"), 3), goto_screen.call("menu"))),
@@ -711,6 +831,7 @@ def _build_game(ctx: Ctx):
               o.change_var(V("gen"), 1)),
         o.set_var(V("state"), gs),
         o.set_var(V("sel"), 1),
+        o.set_var(V("track"), "music0"),
         o.switch_backdrop_var(gs, "menu"),
         paint.call(),
         *_sel_count(ctx, gs),
@@ -743,10 +864,20 @@ def _build_game(ctx: Ctx):
                                 [o.set_var(V("barStr"), o.join(V("barStr"), "}"))]),
                        o.change_var(V("tSlot"), 1)),
               text.call(1, V("barStr"), -96, 140, 100)),
-        text_r.call(1 + BAR_LEN, o.join(V("prog"), "%"), 232, 140, 110),
-        text_r.call(8 + BAR_LEN, o.join("ATTEMPT ", V("attempt")), 232, 166, 100),
-        text.call(22 + BAR_LEN, o.join(o.join("COINS ", V("coins")),
-                                       o.join("/", V("coinTotal"))), -232, -164, 100),
+        # the other three values rarely change from one frame to the next:
+        # skip the put text (and the glyph refresh it triggers) until the
+        # string actually differs from what is on screen
+        o.if_(o.not_(o.eq(o.join(V("prog"), "%"), V("progStr"))),
+              o.set_var(V("progStr"), o.join(V("prog"), "%")),
+              text_r.call(1 + BAR_LEN, V("progStr"), 232, 140, 110)),
+        o.if_(o.not_(o.eq(o.join("ATTEMPT ", V("attempt")), V("attStr"))),
+              o.set_var(V("attStr"), o.join("ATTEMPT ", V("attempt"))),
+              text_r.call(8 + BAR_LEN, V("attStr"), 232, 166, 100)),
+        o.if_(o.not_(o.eq(o.join(o.join("COINS ", V("coins")),
+                                 o.join("/", V("coinTotal"))), V("coinStr"))),
+              o.set_var(V("coinStr"), o.join(o.join("COINS ", V("coins")),
+                                             o.join("/", V("coinTotal")))),
+              text.call(22 + BAR_LEN, V("coinStr"), -232, -164, 100)),
     )
 
     set_prog.define(
@@ -759,11 +890,16 @@ def _build_game(ctx: Ctx):
     )
 
     # ---------------- text helpers ----------------
+    # Each put text bumps the global text revision and stamps it into every
+    # slot it touches. Glyph clones watch their slot's revision and only do
+    # work when the slot they draw has actually been rewritten, which lets the
+    # 48-clone pool go idle while the screen is static.
     text.define(
         o.set_var(V("tSlot"), text.arg(0)),
         o.set_var(V("tX"), text.arg(2)),
         o.set_var(V("tSize"), text.arg(4)),
         o.set_var(V("tLen"), o.length_of(text.arg(1))),
+        o.change_var(V("tRev"), 1),
         o.set_var(V("tI"), 1),
         o.repeat(V("tLen"),
                  o.replace_item(V("tSlot"), o.letter_of(V("tI"), text.arg(1)),
@@ -771,6 +907,7 @@ def _build_game(ctx: Ctx):
                  o.replace_item(V("tSlot"), V("tX"), ctx.l("TXTX")),
                  o.replace_item(V("tSlot"), text.arg(3), ctx.l("TXTY")),
                  o.replace_item(V("tSlot"), V("tSize"), ctx.l("TXTS")),
+                 o.replace_item(V("tSlot"), V("tRev"), ctx.l("TXTREV")),
                  o.change_var(V("tSlot"), 1),
                  o.change_var(V("tI"), 1),
                  o.change_var(V("tX"), o.mul(o.div(V("tSize"), 100), ADV))),
@@ -787,9 +924,11 @@ def _build_game(ctx: Ctx):
     )
 
     clear_text.define(
+        o.change_var(V("tRev"), 1),
         o.set_var(V("tSlot"), 1),
         o.repeat(TEXT_SLOTS,
                  o.replace_item(V("tSlot"), " ", ctx.l("TXTCH")),
+                 o.replace_item(V("tSlot"), V("tRev"), ctx.l("TXTREV")),
                  o.change_var(V("tSlot"), 1)),
     )
 
@@ -816,9 +955,11 @@ def _build_game(ctx: Ctx):
                       [o.set_var(V("state"), "pause"),
                        o.set_var(V("sel"), 1),
                        o.set_var(V("selCount"), 3),
+                       o.set_var(V("track"), "music0"),
                        o.switch_backdrop("pause")],
                       [o.if_(o.eq(V("state"), "pause"),
                              o.set_var(V("state"), "play"),
+                             o.set_var(V("track"), o.join("music", V("level"))),
                              o.switch_backdrop_var(o.join("bg", V("level")),
                                                    "bg1"))]),
              x=900, y=30)
@@ -974,11 +1115,16 @@ def _build_tile(ctx: Ctx):
     spawn_tick.define(
         o.set_var(V("spawnHi"),
                   o.floor_(o.div(o.add(V("worldX"), SPAWN_AHEAD), CELL))),
-        o.repeat(8,
-                 o.if_(o.allof(le(V("spawnCol"), V("spawnHi")),
-                               o.lt(V("spawnCol"), o.add(V("W"), 2))),
-                       spawn_column.call(),
-                       o.change_var(V("spawnCol"), 1))),
+        # worldX only moves on physics steps, so most rendered frames have
+        # nothing new to materialise; skip the whole scan when the spawner is
+        # caught up (or the level is fully spawned)
+        o.if_(o.allof(le(V("spawnCol"), V("spawnHi")),
+                      o.lt(V("spawnCol"), o.add(V("W"), 2))),
+              o.repeat(8,
+                       o.if_(o.allof(le(V("spawnCol"), V("spawnHi")),
+                                     o.lt(V("spawnCol"), o.add(V("W"), 2))),
+                             spawn_column.call(),
+                             o.change_var(V("spawnCol"), 1)))),
     )
 
     spawn_column.define(
@@ -1012,7 +1158,14 @@ def _build_tile(ctx: Ctx):
              o.show(),
              o.forever(
                  o.if_(o.not_(o.eq(s.var("tGen"), V("gen"))), o.delete_clone()),
-                 o.set_x(o.sub(o.add(o.mul(s.var("tCol"), CELL), HALF), V("worldX"))),
+                 # scroll left by exactly the distance the world scrolled this
+                 # frame: SPEED per physics step. Tiles are born at
+                 # (tCol*CELL + HALF) - worldX, and worldX grows by SPEED per
+                 # step, so decrementing by SPEED*stepsRun per rendered frame
+                 # keeps every tile aligned with its cell (all values are
+                 # integer-valued floats, so nothing drifts).
+                 o.if_(o.gt(V("stepsRun"), 0),
+                       o.change_x(o.mul(-SPEED, V("stepsRun")))),
                  o.if_(o.lt(o.x_position(), DESPAWN_X), o.delete_clone())),
              x=430, y=30,
              comment="y and costume were fixed by the parent before cloning.")
@@ -1055,7 +1208,9 @@ def _build_ground(ctx: Ctx):
              o.show(),
              o.forever(
                  o.if_(o.not_(o.eq(s.var("wGen"), V("gen"))), o.delete_clone()),
-                 o.change_x(-SPEED),
+                 # one world-scroll per physics step keeps the floor locked to
+                 # the tiles at any render rate
+                 o.change_x(o.mul(-SPEED, V("stepsRun"))),
                  o.if_(o.lt(o.x_position(), -480), o.change_x(960))),
              x=430, y=120)
     return s
@@ -1089,10 +1244,11 @@ def _build_far(ctx: Ctx):
              o.show(),
              o.forever(
                  o.if_(o.not_(o.eq(s.var("wGen"), V("gen"))), o.delete_clone()),
-                 o.change_x(-4),
+                 o.change_x(o.mul(-4, V("stepsRun"))),
                  o.if_(o.lt(o.x_position(), -480), o.change_x(960))),
              x=330, y=120,
-             comment="Slower than the ground, which is what sells the depth.")
+             comment="Slower than the ground, which is what sells the depth. "
+                     "Moves one parallax step per physics step.")
     return s
 
 
@@ -1216,13 +1372,23 @@ def _build_sel(ctx: Ctx):
 
 
 def _sel_y_chain(ctx, s):
+    """Position the menu highlight.
+
+    Every screen's selectable rows are evenly spaced, so instead of testing
+    state x selection in a 16-branch chain each frame, per screen the row y is
+    `base - step * (sel - 1)`, derived here from SEL_Y itself. The visible
+    result is identical; the per-frame cost drops from ~16 comparisons to 5.
+    """
     V = ctx.v
     blocks = [o.set_var(s.var("rowY"), 0)]
     for screen, ys in SEL_Y.items():
-        for i, y in enumerate(ys):
-            blocks.append(o.if_(o.allof(o.eq(V("state"), screen),
-                                        o.eq(V("sel"), i + 1)),
-                                o.set_var(s.var("rowY"), y)))
+        assert all(ys[i] - ys[i + 1] == ys[0] - ys[1] for i in range(len(ys) - 1)), \
+            f"{screen}: rows are not evenly spaced"
+        base, step = ys[0], ys[0] - ys[1]
+        blocks.append(o.if_(
+            o.eq(V("state"), screen),
+            o.set_var(s.var("rowY"),
+                      o.sub(base, o.mul(step, o.sub(V("sel"), 1))))))
     blocks.append(o.goto_xy(0, s.var("rowY")))
     return blocks
 
@@ -1241,7 +1407,7 @@ def _build_text(ctx: Ctx):
     s.visible = False
     s.rotation_style = "don't rotate"
     ctx.p.sprites.append(s)
-    for name in ("nextSlot", "mySlot", "myChar"):
+    for name in ("nextSlot", "mySlot", "myChar", "myRev"):
         s.var(name, 0)
 
     s.script(o.when_flag(),
@@ -1257,17 +1423,22 @@ def _build_text(ctx: Ctx):
              o.set_var(s.var("mySlot"), s.var("nextSlot")),
              o.set_var(s.var("myChar"), "?"),
              o.forever(
-                 o.if_(o.not_(o.eq(o.item_of(s.var("mySlot"), ctx.l("TXTCH")),
-                                   s.var("myChar"))),
+                 # only touch costume/position/size when this slot's text was
+                 # rewritten (TXTREV[slot] != myRev); otherwise the clone is a
+                 # no-op this frame
+                 o.if_(o.not_(o.eq(o.item_of(s.var("mySlot"), ctx.l("TXTREV")),
+                                   s.var("myRev"))),
+                       o.set_var(s.var("myRev"),
+                                 o.item_of(s.var("mySlot"), ctx.l("TXTREV"))),
                        o.set_var(s.var("myChar"),
                                  o.item_of(s.var("mySlot"), ctx.l("TXTCH"))),
                        o.ifelse(o.eq(s.var("myChar"), " "),
                                 [o.hide()],
                                 [o.show(),
-                                 o.switch_costume_var(s.var("myChar"), s, "A")])),
-                 o.goto_xy(o.item_of(s.var("mySlot"), ctx.l("TXTX")),
-                           o.item_of(s.var("mySlot"), ctx.l("TXTY"))),
-                 o.set_size(o.item_of(s.var("mySlot"), ctx.l("TXTS")))),
+                                 o.switch_costume_var(s.var("myChar"), s, "A")]),
+                       o.goto_xy(o.item_of(s.var("mySlot"), ctx.l("TXTX")),
+                                 o.item_of(s.var("mySlot"), ctx.l("TXTY"))),
+                       o.set_size(o.item_of(s.var("mySlot"), ctx.l("TXTS"))))),
              x=330, y=30)
     return s
 
@@ -1290,11 +1461,14 @@ def _build_sound(ctx: Ctx):
              o.stop_all_sounds(),
              o.forever(
                  o.ifelse(o.eq(V("musicOn"), 1),
-                          [_play_track(ctx)],
+                          [o.play_sound_until_done_var(V("track"), "music0")],
                           [o.wait(0.25)])),
              x=30, y=120,
              comment="One looping thread; 'play until done' parks the thread "
-                     "until the track finishes, so the repeats stay gapless.")
+                     "until the track finishes, so the repeats stay gapless. "
+                     "The track name is kept in `track` by the state "
+                     "transitions (start level, screens, pause, win), so the "
+                     "loop body no longer re-derives it every iteration.")
 
     x = 430
     for msg in ("sfx jump", "sfx die", "sfx coin", "sfx portal", "sfx pad",
@@ -1304,24 +1478,6 @@ def _build_sound(ctx: Ctx):
                  x=x, y=120)
         x += 260
     return s
-
-
-def _play_track(ctx):
-    V = ctx.v
-    st = V("state")
-    menus = o.anyof(o.anyof(o.eq(st, "menu"), o.eq(st, "select")),
-                    o.anyof(o.eq(st, "settings"),
-                            o.anyof(o.eq(st, "help"),
-                                    o.anyof(o.eq(st, "pause"), o.eq(st, "win")))))
-    return o.chain(
-        o.ifelse(menus,
-                 [o.play_sound_until_done("music0")],
-                 [o.ifelse(o.eq(V("level"), 1),
-                           [o.play_sound_until_done("music1")],
-                           [o.ifelse(o.eq(V("level"), 2),
-                                     [o.play_sound_until_done("music2")],
-                                     [o.play_sound_until_done("music3")])])]),
-    )
 
 
 def _sounds():

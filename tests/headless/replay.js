@@ -225,7 +225,9 @@ async function tapScenario (file, fps) {
         fail(`tap @60fps: the 1-render-frame press already ran a physics step ` +
              `(frame ${frameWhileDown}); the scenario no longer spans no step`);
     }
-    for (let i = 0; i < 20; i += 1) stepOnce();
+    // run on to physics step 33 (render frames are the wrong unit here: at
+    // 60 fps they are not 1:1 with steps)
+    while (lastF < 33) stepOnce();
     const jumpSteps = rows.filter(r => r.grounded === 0 && r.vy === JUMP_VY);
     return {rows, jumpSteps, frameWhileDown};
 }

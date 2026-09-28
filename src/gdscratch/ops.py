@@ -224,6 +224,14 @@ def play_sound_until_done(name) -> Block:
                                                   fields={"SOUND_MENU": name}))})
 
 
+def play_sound_until_done_var(value, default: str) -> Block:
+    """``play sound (value) until done`` keeping the dropdown as a shadow."""
+    from .sb3 import Block as _B, Plugged as _P
+
+    menu = _B("sound_menu", fields={"SOUND_MENU": default})
+    return _B("sound_playuntildone", inputs={"SOUND_MENU": _P(value, menu)})
+
+
 def stop_all_sounds() -> Block:
     return Block("sound_stopallsounds")
 

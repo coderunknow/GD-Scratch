@@ -26,6 +26,7 @@ import sys
 import zipfile
 
 BROADCAST = 11
+VARIABLE = 12
 
 
 def load(path: str) -> dict:
@@ -79,6 +80,7 @@ def audit(path: str) -> dict:
     sent = collections.Counter()
     received = collections.Counter()
     played = collections.Counter()
+    played_via_var = set()
     clone_sites = collections.Counter()
     calls = collections.Counter()
     defs = collections.Counter()
@@ -110,8 +112,24 @@ def audit(path: str) -> dict:
                 received[bid] += 1
             elif op in ("sound_play", "sound_playuntildone"):
                 for kind, value in input_elements(block, "SOUND_MENU"):
-                    if kind == "block":
-                        played[field_of(blocks, value, "SOUND_MENU")] += 1
+                    if kind == "prim" and value and value[0] == VARIABLE:
+                        # the sound name comes from a variable at runtime
+                        # (GD-Scratch's `track`); record the variable, since
+                        # which assets it plays cannot be proven statically
+                        played_via_var.add(value[1])
+                        continue
+                    if kind != "block":
+                        continue
+                    menu = blocks.get(value)
+                    if not menu:
+                        continue
+                    name = field_of(blocks, value, "SOUND_MENU")
+                    if name is not None:
+                        played[name] += 1
+                    elif menu.get("opcode") == "data_variable":
+                        var_field = (menu.get("fields") or {}).get("VARIABLE")
+                        if var_field:
+                            played_via_var.add(var_field[0])
             elif op == "control_create_clone_of":
                 clone_sites[target["name"]] += 1
             elif op == "control_forever":
@@ -130,8 +148,10 @@ def audit(path: str) -> dict:
         for sound in target.get("sounds", []):
             sounds[sound["name"]] = f'{target["name"]}/{sound["name"]}'
 
+    # A sound is "never played" only if no literal play and no variable play
+    # path exists at all.
     never_played = sorted(key for name, key in sounds.items()
-                          if played.get(name, 0) == 0)
+                          if played.get(name, 0) == 0 and not played_via_var)
 
     return {
         "file": path,
@@ -143,7 +163,8 @@ def audit(path: str) -> dict:
             "sentButNoReceiver": no_receiver,
             "sendCounts": {name: sent[bid] for bid, name in sorted(declared.items())},
         },
-        "sounds": {"total": len(sounds), "neverPlayed": never_played},
+        "sounds": {"total": len(sounds), "neverPlayed": never_played,
+                   "playedViaVariable": sorted(played_via_var)},
         "cloneSites": dict(sorted(clone_sites.items())),
         "foreverLoops": dict(sorted(forever_loops.items())),
         "procedures": {"defined": len(defs),
